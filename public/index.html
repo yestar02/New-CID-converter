@@ -5,16 +5,30 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>아고다 CID 변환기</title>
   <link rel="stylesheet" href="style.css">
-  <script src="https://cdn.jsdelivr.net/npm/disable-devtool@1.4.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/disable-devtool@1.4.0/index.min.js"></script>
 </head>
 <body>
   <div class="container">
     <h1>아고다 CID 변환기 (BY. 아슨트라)</h1>
     <form id="frm">
-      <input type="text" id="agodaUrl" placeholder="아고다 호텔 상세 URL 입력">
-      <button type="submit">변환</button>
+      <input 
+        type="text" 
+        id="agodaUrl" 
+        placeholder="아고다 호텔 상세 URL 입력" 
+        required
+      >
+      <button type="submit" id="submitBtn">변환</button>
     </form>
+    
+    <div id="loading" style="display:none;">
+      <p>🔍 CID 검색 중... 잠시만 기다려주세요.</p>
+      <div class="progress-bar">
+        <div class="progress-fill"></div>
+      </div>
+    </div>
+    
     <div id="hotelTitle" style="display:none"></div>
+    
     <table id="tbl" style="display:none">
       <thead>
         <tr>
@@ -29,19 +43,25 @@
         <tr id="cheapest" class="cheapest-row"></tr>
       </tfoot>
     </table>
+    
     <div id="affiliateLinks" style="display:none">
       <h3>제휴 링크 바로가기</h3>
       <table>
         <thead>
           <tr>
             <th>구분</th>
-            <th>주소</th>
+            <th>바로가기</th>
           </tr>
         </thead>
         <tbody id="affiliateBody"></tbody>
       </table>
     </div>
+    
+    <div id="stats" style="display:none;">
+      <p><small>검색 완료: <span id="statsText"></span></small></p>
+    </div>
   </div>
+  
   <script src="main.js"></script>
 </body>
 </html>
