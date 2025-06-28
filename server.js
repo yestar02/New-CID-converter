@@ -1,6 +1,6 @@
 import express from 'express';
 import axios from 'axios';
-import cheerio from 'cheerio';
+import * as cheerio from 'cheerio';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
