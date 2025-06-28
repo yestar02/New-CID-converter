@@ -1,16 +1,18 @@
-<project xmlns="http://maven.apache.org/POM/4.0.0" 
+<project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
-                             http://maven.apache.org/maven-v4_0_0.xsd">
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
+
   <groupId>com.example</groupId>
   <artifactId>agoda-cid-converter</artifactId>
   <version>1.0.0</version>
   <packaging>jar</packaging>
-  <name>Agoda CID Converter</name>
 
   <properties>
-    <java.version>17</java.version>
+    <!-- Java 컴파일 타겟 버전 -->
+    <maven.compiler.release>17</maven.compiler.release>
+    <maven.compiler.plugin.version>3.14.0</maven.compiler.plugin.version>
     <spring.boot.version>3.1.2</spring.boot.version>
   </properties>
 
@@ -21,22 +23,39 @@
       <artifactId>spring-boot-starter-web</artifactId>
       <version>${spring.boot.version}</version>
     </dependency>
+
     <!-- Jsoup for HTML parsing -->
     <dependency>
       <groupId>org.jsoup</groupId>
       <artifactId>jsoup</artifactId>
-      <version>1.15.3</version>  <!-- 최신 안정 버전 권장[13] -->
+      <version>1.15.3</version>
     </dependency>
-    <!-- Jackson JSON 파싱 내장 -->
   </dependencies>
 
   <build>
     <plugins>
+      <!-- Maven Compiler Plugin: Java 17 지원 -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>${maven.compiler.plugin.version}</version>
+        <configuration>
+          <release>${maven.compiler.release}</release>
+        </configuration>
+      </plugin>
+
       <!-- Spring Boot Maven Plugin -->
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
         <version>${spring.boot.version}</version>
+        <executions>
+          <execution>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
+          </execution>
+        </executions>
       </plugin>
     </plugins>
   </build>
