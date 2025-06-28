@@ -11,19 +11,17 @@
   <div class="container">
     <h1>아고다 CID 변환기</h1>
     <form id="frm">
-      <input type="text" id="agodaUrl" placeholder="아고다 호텔 URL 입력" required>
-      <button id="btn" type="submit">변환</button>
+      <input type="text" id="agodaUrl" placeholder="아고다 호텔 상세 URL 입력" required>
+      <button type="submit" id="submitBtn">변환</button>
     </form>
-    <div id="loading" class="loading" style="display:none;">🔍 검색 중...</div>
+    <div id="loading" style="display:none;">🔍 검색 중...</div>
     <h2 id="hotelTitle" style="display:none;"></h2>
     <table id="tbl" style="display:none;">
       <thead>
         <tr><th>구분</th><th>가격(₩)</th><th>열기</th><th>복사</th></tr>
       </thead>
       <tbody></tbody>
-      <tfoot>
-        <tr id="cheapest" class="cheapest-row"></tr>
-      </tfoot>
+      <tfoot><tr id="cheapest" class="cheapest-row"></tr></tfoot>
     </table>
     <div id="aff" style="display:none;">
       <h3>제휴 링크</h3>

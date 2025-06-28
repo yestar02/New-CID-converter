@@ -55,9 +55,9 @@ $('#frm').addEventListener('submit', async e => {
     });
     $('#aff').style.display = 'block';
 
-    document.querySelectorAll('button[data-url]').forEach(b => {
-      b.addEventListener('click', () => copy(b.dataset.url));
-    });
+    document.querySelectorAll('button[data-url]').forEach(b =>
+      b.addEventListener('click', () => copy(b.dataset.url))
+    );
   } catch (err) {
     console.error(err);
     alert('오류가 발생했습니다.');
