@@ -34,6 +34,7 @@ const STATIC_CID_LIST = [
   { label: '우리', cid: 1654104 },
   { label: '우리(마스터)', cid: 1932810 },
   { label: 'BC', cid: 1748498 },
+  { label: '현대', cid: 1768446 },
   { label: '신한', cid: 1760133 },
   { label: '신한(마스터)', cid: 1917257 },
   { label: '토스', cid: 1917334 },
@@ -55,6 +56,7 @@ const AFFILIATE_LINKS = [
   { label: '우리', url: 'https://www.agoda.com/ko-kr/wooricard' },
   { label: '우리(마스터)', url: 'https://www.agoda.com/ko-kr/wooricardmaster' },
   { label: 'BC', url: 'https://www.agoda.com/ko-kr/bccard' },
+  { label: '현대', url: 'https://www.agoda.com/ko-kr/hyundaicard' },
   { label: '신한', url: 'https://www.agoda.com/ko-kr/shinhancard' },
   { label: '신한(마스터)', url: 'https://www.agoda.com/ko-kr/shinhanmaster' },
   { label: '토스', url: 'https://www.agoda.com/ko-kr/tossbank' },
@@ -69,198 +71,72 @@ const AFFILIATE_LINKS = [
 ];
 
 // 1,800,000~1,999,999 범위에서 무작위 50개 샘플링
+// 개발자도구 차단
 function getRandomCids(count, min, max) {
-  const cids = new Set();
-  while (cids.size < count) {
-    const cid = Math.floor(Math.random() * (max - min + 1)) + min;
-    cids.add(cid);
+  const set = new Set();
+  while (set.size < count) {
+    set.add(Math.floor(Math.random() * (max - min + 1)) + min);
   }
-  return Array.from(cids).map(cid => ({
-    label: `AUTO-${cid}`,
-    cid
-  }));
+  return [...set].map(cid => ({ label: `AUTO-${cid}`, cid }));
 }
+const CID_LIST = [...STATIC_CID_LIST, ...getRandomCids(50, 1800000, 1999999)];
 
-const RANDOM_CIDS = getRandomCids(50, 1800000, 1999999);
-const CID_LIST = [...STATIC_CID_LIST, ...RANDOM_CIDS];
-
-// URL 유효성 검사 함수
-function validateAgodaUrl(url) {
-  if (!url || typeof url !== 'string') return false;
-  if (!/agoda\.com/.test(url)) return false;
-  if (/\/search/.test(url)) return false;
-  if (!/cid=[\d-]+/.test(url)) return false;
-  return true;
+// URL 검증
+function validateUrl(url) {
+  return url && /agoda\.com/.test(url) && !/\/search/.test(url) && /cid=\d+/.test(url);
 }
-
-// CID 교체 함수
-function replaceCid(url, newCid) {
-  try {
-    if (url.includes('cid=-1')) {
-      return url.replace('cid=-1', `cid=${newCid}`);
-    }
-    return url.replace(/cid=\d+/, `cid=${newCid}`);
-  } catch (error) {
-    console.error('CID 교체 오류:', error);
-    return url;
-  }
+// CID 교체
+function replaceCid(url, cid) {
+  return url.includes('cid=-1') 
+    ? url.replace('cid=-1', `cid=${cid}`) 
+    : url.replace(/cid=\d+/, `cid=${cid}`);
 }
-
-// 호텔 정보 및 가격 추출 (향상된 에러 처리)
+// 호텔명·가격 조회
 async function fetchHotelInfo(url) {
   const headers = {
-    'Accept-Language': 'ko,ko-KR;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Accept-Language': 'ko,ko-KR;q=0.9',
     'ag-language-locale': 'ko-kr',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0'
   };
-
   try {
-    // 요청 타임아웃 설정 (Render 무료 플랜 최적화)
-    const htmlResponse = await axios.get(url, { 
-      headers, 
-      timeout: 10000,
-      maxRedirects: 5
-    });
-    
-    const $ = cheerio.load(htmlResponse.data);
-    const scriptTag = $('script[data-selenium="script-initparam"]');
-    
-    if (!scriptTag.length) {
-      return { hotel: '스크립트 태그 없음', price: null };
-    }
-
-    const scriptContent = scriptTag.text();
-    const apiUrlMatch = scriptContent.match(/apiUrl\s*=\s*"(.+?)"/);
-
-    if (!apiUrlMatch) {
-      return { hotel: 'API URL 없음', price: null };
-    }
-
-    const apiUrl = `https://www.agoda.com${apiUrlMatch[1].replace(/&amp;/g, '&')}`;
-    
-    const apiResponse = await axios.get(apiUrl, { 
-      headers, 
-      timeout: 8000 
-    });
-    
-    const apiData = apiResponse.data;
-    const hotel = apiData?.hotelInfo?.name || '호텔명 추출 실패';
-    const price = apiData?.rooms?.[0]?.directPrice?.originalPrice || null;
-
-    return { hotel, price };
-  } catch (error) {
-    console.error(`호텔 정보 조회 실패 (${url}):`, error.message);
-    return { hotel: '조회 실패', price: null };
+    const html = await axios.get(url, { headers, timeout: 10000 }).then(r => r.data);
+    const $ = cheerio.load(html);
+    const init = $('script[data-selenium="script-initparam"]').text();
+    const apiPath = init.match(/apiUrl\s*=\s*"(.+?)"/)?.[1]?.replace(/&amp;/g, '&');
+    if (!apiPath) return { hotel: null, price: null };
+    const data = await axios.get(`https://www.agoda.com${apiPath}`, { headers, timeout: 8000 }).then(r => r.data);
+    return {
+      hotel: data.hotelInfo?.name || null,
+      price: data.rooms?.[0]?.directPrice?.originalPrice || null
+    };
+  } catch {
+    return { hotel: null, price: null };
   }
 }
 
-// 배치 처리 함수 (Render 메모리 최적화)
-async function processBatch(links, batchSize = 10) {
-  const results = [];
-  
-  for (let i = 0; i < links.length; i += batchSize) {
-    const batch = links.slice(i, i + batchSize);
-    
-    const batchResults = await Promise.allSettled(
-      batch.map(async link => {
-        const { hotel, price } = await fetchHotelInfo(link.url);
-        return { ...link, hotel, price };
-      })
-    );
-
-    results.push(...batchResults);
-    
-    // 배치 간 짧은 지연 (서버 부하 감소)
-    if (i + batchSize < links.length) {
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-  }
-  
-  return results;
-}
-
-// 메인 변환 API
+// 변환 API
 app.post('/convert', async (req, res) => {
   const { url } = req.body;
+  if (!validateUrl(url)) return res.status(400).json({ message: '유효하지 않은 URL' });
 
-  if (!validateAgodaUrl(url)) {
-    return res.status(400).json({ 
-      success: false, 
-      message: '유효하지 않은 아고다 URL입니다.' 
-    });
+  // 링크 생성 및 배치 처리
+  const links = CID_LIST.map(o => ({ ...o, url: replaceCid(url, o.cid) }));
+  const results = [];
+  for (let i = 0; i < links.length; i += 8) {
+    const batch = links.slice(i, i + 8);
+    const ps = batch.map(l => fetchHotelInfo(l.url).then(info => ({ ...l, ...info })));
+    results.push(...await Promise.all(ps));
+    await new Promise(r => setTimeout(r, 500));
   }
 
-  try {
-    // CID 교체 링크 생성
-    const links = CID_LIST.map(item => ({
-      label: item.label,
-      cid: item.cid,
-      url: replaceCid(url, item.cid)
-    }));
+  const priced = results.filter(r => r.price != null).sort((a, b) => a.price - b.price);
+  const cheapest = priced[0] || null;
+  const hotel = cheapest?.hotel || null;
 
-    console.log(`처리 시작: ${links.length}개 CID 검색`);
-
-    // 배치 처리로 메모리 최적화
-    const results = await processBatch(links, 8); // Render 무료 플랜 최적화
-
-    // 성공한 결과만 추출
-    const priced = results
-      .filter(r => r.status === 'fulfilled' && r.value.price != null && r.value.price > 0)
-      .map(r => r.value)
-      .sort((a, b) => a.price - b.price);
-
-    const cheapest = priced[0] || null;
-    const hotel = priced[0]?.hotel || '호텔 정보 없음';
-
-    console.log(`처리 완료: ${priced.length}개 가격 발견`);
-
-    res.json({
-      success: true,
-      hotel,
-      priced,
-      cheapest,
-      affiliateLinks: AFFILIATE_LINKS,
-      totalChecked: links.length,
-      foundPrices: priced.length
-    });
-
-  } catch (error) {
-    console.error('변환 처리 중 오류:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: '서버 내부 오류가 발생했습니다.' 
-    });
-  }
+  res.json({ hotel, priced, cheapest, affiliateLinks: AFFILIATE_LINKS });
 });
 
-// 헬스 체크 엔드포인트
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
-  });
-});
+// 정적 페이지
+app.get('/', (_, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-// 메인 페이지
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// 404 핸들러
-app.use('*', (req, res) => {
-  res.status(404).json({ message: 'Page not found' });
-});
-
-// 에러 핸들러
-app.use((err, req, res, next) => {
-  console.error('서버 오류:', err);
-  res.status(500).json({ message: 'Internal server error' });
-});
-
-// 서버 시작 (Render 호환성)
-app.listen(PORT, HOST, () => {
-  console.log(`🚀 Agoda CID Converter server running on http://${HOST}:${PORT}`);
-  console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔧 Total CIDs: ${CID_LIST.length}`);
-});
+app.listen(PORT, HOST, () => console.log(`Listening on ${HOST}:${PORT}`));
