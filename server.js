@@ -104,7 +104,7 @@ app.post('/convert', async (req, res) => {
 
     /* ② 순차 CID 증분 검사 (cid=1~9999999) → 최저가 */
     const dynamicCids = [];
-    for (let i = 1; i <= 50; i++) {          // 최대 50회
+    for (let i = 1; i <= 1000000; i++) {          // 최대 50회
       const trialCid   = 1000000 + i;        // 예: 1000001, …
       const trialUrl   = replaceCid(url, trialCid);
       dynamicCids.push({ label: `AUTO-${i}`, cid: trialCid, url: trialUrl });
