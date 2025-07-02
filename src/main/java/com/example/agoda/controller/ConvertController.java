@@ -127,36 +127,38 @@ public class ConvertController {
             try {
                 JsonNode root = fetchSecondaryDataJson(modUrl);
 
-                // 호텔명 추출
+                // 호텔명
                 String hotel = root.path("hotelInfo").path("name").asText(null);
 
-                // stickyFooter.discount.cheapestPriceWithCurrency 추출 및 숫자만 파싱
-                String rawPrice = root.path("stickyFooter")
-                                      .path("discount")
-                                      .path("cheapestPriceWithCurrency")
-                                      .asText("");
-                // 인코딩 오류로 깨진 기호(��) 포함 가능 → 숫자만 남김
-                String numeric = rawPrice.replaceAll("[^0-9]", "");
-                double price = numeric.isBlank() ? 0 : Double.parseDouble(numeric);
-                boolean soldOut = price == 0;
+                // 숫자로만 된 시작가 추출 (mosaicInitData.discount.cheapestPrice)
+                double price = root.path("mosaicInitData")
+                                   .path("discount")
+                                   .path("cheapestPrice")
+                                   .asDouble(0);
+                // 콤마 포함 문자열이 필요하다면:
+                // String raw = root.path("stickyFooter").path("discount").path("cheapestPriceWithCurrency").asText("");
+                // String numeric = raw.replaceAll("[^0-9]", "");
+                // price = numeric.isBlank() ? 0 : Double.parseDouble(numeric);
 
+                boolean soldOut = price == 0;
                 results.add(new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel));
                 return;
             } catch (Exception e) {
                 if (i == maxAttempts) {
                     results.add(new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null));
                 } else {
-                    try { Thread.sleep(500L * i); } catch (InterruptedException ignored) {}
+                    try { Thread.sleep(1000L * i); } catch (InterruptedException ignored) {}
                 }
             }
         }
     }
 
     private JsonNode fetchSecondaryDataJson(String hotelPageUrl) throws Exception {
-        // HTML 파싱 시 UTF-8로 처리
+        // HTML 파싱 시 UTF-8 처리
         Document doc = Jsoup.connect(hotelPageUrl)
-            .header("Accept-Language","ko-KR")
-            .timeout((int)Duration.ofSeconds(10).toMillis())
+            .header("Accept-Language","ko-KR,ko;q=0.9,en;q=0.8")
+            .header("User-Agent","Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .timeout((int)Duration.ofSeconds(15).toMillis())
             .get();
         Element script = doc.selectFirst("script[data-selenium=script-initparam]");
         String content = script != null
@@ -169,8 +171,10 @@ public class ConvertController {
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(apiUrl))
-            .header("Accept-Language","ko-KR")
-            .timeout(Duration.ofSeconds(15))  // 응답 충분히 대기
+            .header("Accept-Language","ko-KR,ko;q=0.9,en;q=0.8")
+            .header("User-Agent","Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            .header("Referer", hotelPageUrl)
+            .timeout(Duration.ofSeconds(20))
             .GET()
             .build();
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
