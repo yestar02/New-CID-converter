@@ -1,3 +1,5 @@
+// src/main/java/com/example/agoda/controller/ConvertController.java
+
 package com.example.agoda.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -9,46 +11,46 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.net.URI;
 import java.net.http.*;
+import java.net.URI;
 import java.time.Duration;
 import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @RestController
 @RequestMapping("/api")
 public class ConvertController {
 
+    // 고정 CID 목록 (구글2번/현대카드 반영)
     private static final List<CidEntry> STATIC_CIDS = List.of(
-        new CidEntry("구글 지도 1",    1833982),
-        new CidEntry("구글 지도 2",    1917614),
-        new CidEntry("구글 지도 3",    1829668),
-        new CidEntry("구글 검색 1",    1908617),
-        new CidEntry("구글 검색 2",    1921868),
-        new CidEntry("구글 검색 3",    1922847),
-        new CidEntry("네이버",         1881505),
-        new CidEntry("Bing",          1911217),
-        new CidEntry("다음",          1908762),
-        new CidEntry("DuckDuckGo",    1895204),
-        new CidEntry("국민카드",       1563295),
-        new CidEntry("우리카드",       1654104),
-        new CidEntry("우리카드(마스터)",1932810),
-        new CidEntry("현대카드",       1768446),
-        new CidEntry("BC카드",         1748498),
-        new CidEntry("신한카드",       1760133),
-        new CidEntry("신한카드(마스터)",1917257),
-        new CidEntry("토스",           1917334),
-        new CidEntry("하나카드",       1729471),
-        new CidEntry("카카오페이",     1845109),
-        new CidEntry("마스터카드",     1889572),
-        new CidEntry("유니온페이",     1801110),
-        new CidEntry("비자",           1889319),
-        new CidEntry("대한항공(적립)", 1904827),
-        new CidEntry("아시아나항공(적립)",1806212),
-        new CidEntry("에어서울",       1800120)
+        new CidEntry("구글 지도 1",        1833982),
+        new CidEntry("구글 지도 2",        1917614),
+        new CidEntry("구글 지도 3",        1829668),
+        new CidEntry("구글 검색 1",        1908617),
+        new CidEntry("구글 검색 2",        1921868),
+        new CidEntry("구글 검색 3",        1922847),
+        new CidEntry("네이버",             1881505),
+        new CidEntry("Bing",              1911217),
+        new CidEntry("다음",              1908762),
+        new CidEntry("DuckDuckGo",        1895204),
+        new CidEntry("국민카드",           1563295),
+        new CidEntry("우리카드",           1654104),
+        new CidEntry("우리카드(마스터)",   1932810),
+        new CidEntry("현대카드",           1768446),
+        new CidEntry("BC카드",             1748498),
+        new CidEntry("신한카드",           1760133),
+        new CidEntry("신한카드(마스터)",   1917257),
+        new CidEntry("토스",               1917334),
+        new CidEntry("하나카드",           1729471),
+        new CidEntry("카카오페이",         1845109),
+        new CidEntry("마스터카드",         1889572),
+        new CidEntry("유니온페이",         1801110),
+        new CidEntry("비자",               1889319),
+        new CidEntry("대한항공(적립)",     1904827),
+        new CidEntry("아시아나항공(적립)", 1806212),
+        new CidEntry("에어서울",           1800120)
     );
 
+    // 제휴 링크 목록
     private static final List<AffiliateLink> AFFILIATES = List.of(
         new AffiliateLink("국민카드",       "https://www.agoda.com/ko-kr/kbcard"),
         new AffiliateLink("우리카드",       "https://www.agoda.com/ko-kr/wooricard"),
@@ -72,20 +74,24 @@ public class ConvertController {
     private final HttpClient http = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(5))
         .build();
-    private final Pattern apiUrlPattern = Pattern.compile("apiUrl\\s*=\\s*\"(.+?)\"");
 
     @PostMapping(value = "/convert", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> convert(@RequestBody Map<String, String> body) {
         String url = body.get("url");
         // URL 유효성 검사
         if (url == null || url.trim().isEmpty()) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "주소를 입력해주세요."));
+            return ResponseEntity.badRequest()
+                .body(Map.of("success", false, "message", "주소를 입력해주세요."));
         } else if (!url.contains("agoda.com")) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "아고다 주소가 아닌 것 같아요."));
-        } else if (url.contains("agoda.com/ko-kr/search")) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "검색 페이지 URL은 사용할 수 없어요."));
+            return ResponseEntity.badRequest()
+                .body(Map.of("success", false, "message", "아고다 주소가 아닌 것 같아요."));
+        } else if (url.contains("/search")) {
+            return ResponseEntity.badRequest()
+                .body(Map.of("success", false, "message", "검색 페이지 URL은 사용할 수 없어요."));
         } else if (!url.contains("cid=")) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "주소에서 cid 값을 찾을 수 없어요.\n올바른 주소인지 확인해주세요."));
+            return ResponseEntity.badRequest()
+                .body(Map.of("success", false, "message",
+                    "주소에서 cid 값을 찾을 수 없어요.\n올바른 주소인지 확인해주세요."));
         }
 
         List<CidEntry> cidList = buildCidList();
@@ -95,11 +101,16 @@ public class ConvertController {
         for (CidEntry entry : cidList) {
             String modUrl = url.replaceAll("cid=-?\\d+", "cid=" + entry.cid);
             try {
-                PriceInfo info = extractPriceInfo(modUrl);
-                if (hotelName == null) hotelName = info.hotelName;
-                if (info.isSoldOut || info.price > 0) {
-                    results.add(new LinkInfo(entry.label, entry.cid, modUrl, info.price, info.isSoldOut));
+                JsonNode api = fetchApiJson(modUrl);
+                // 호텔명 추출
+                if (hotelName == null) {
+                    JsonNode nameNode = api.path("hotelInfo").path("name");
+                    hotelName = nameNode.isTextual() ? nameNode.asText() : "호텔명 없음";
                 }
+                // 가격&매진 판단
+                double price = api.path("discount").path("cheapestPrice").asDouble(0);
+                boolean isSoldOut = price == 0;
+                results.add(new LinkInfo(entry.label, entry.cid, modUrl, price, isSoldOut));
                 Thread.sleep(200);
             } catch (Exception e) {
                 if (hotelName == null) {
@@ -108,73 +119,38 @@ public class ConvertController {
             }
         }
 
+        // 예약 가능 객실만 최저가 계산
         List<LinkInfo> available = results.stream()
             .filter(r -> !r.isSoldOut && r.price > 0)
             .sorted(Comparator.comparingDouble(li -> li.price))
             .toList();
         LinkInfo cheapest = available.isEmpty() ? null : available.get(0);
 
-        // Map.of 대신 HashMap 사용
-        Map<String, Object> response = new HashMap<>();
-        response.put("success", true);
-        response.put("hotel", hotelName != null ? hotelName : "호텔 정보 없음");
-        response.put("priced", results);
-        response.put("cheapest", cheapest); // null 허용
-        response.put("affiliateLinks", AFFILIATES);
-
-        return ResponseEntity.ok(response);
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("success", true);
+        resp.put("hotel", hotelName);
+        resp.put("priced", results);
+        resp.put("cheapest", cheapest);
+        resp.put("affiliateLinks", AFFILIATES);
+        return ResponseEntity.ok(resp);
     }
 
-    /** 가격 & 매진 정보 추출 */
-    private PriceInfo extractPriceInfo(String url) throws Exception {
+    // 내부 API JSON 가져오기
+    private JsonNode fetchApiJson(String url) throws Exception {
         Document doc = Jsoup.connect(url)
             .header("Accept-Language", "ko-KR")
-            .userAgent("Mozilla/5.0")
-            .timeout(10000)
+            .timeout(Duration.ofSeconds(10).toMillisPart())
             .get();
-
-        // 매진 감지
-        Element soldOutElem = doc.selectFirst(".RoomGrid-searchTimeOutText");
-        boolean isSoldOut = soldOutElem != null
-            && soldOutElem.text().contains("고객님이 선택한 날짜에 이 숙소의 본 사이트 잔여 객실이 없습니다");
-
-        // 호텔명 추출
-        String hotelName = Optional.ofNullable(doc.selectFirst("h1"))
-            .map(Element::text).filter(t -> !t.isEmpty())
-            .orElse("호텔명 없음");
-
-        // 가격 추출 (매진이 아닐 때만)
-        double price = 0;
-        if (!isSoldOut) {
-            Element priceElem = doc.selectFirst(".StickyNavPrice__priceDetail");
-            if (priceElem != null) {
-                String txt = priceElem.text().replaceAll("[^0-9]", "");
-                if (!txt.isEmpty()) price = Double.parseDouble(txt);
-            } else {
-                // 폴백: API 호출
-                Element scriptTag = doc.selectFirst("script[data-selenium=script-initparam]");
-                if (scriptTag != null) {
-                    String content = scriptTag.data().isEmpty() ? scriptTag.text() : scriptTag.data();
-                    Matcher m = apiUrlPattern.matcher(content);
-                    if (m.find()) {
-                        String apiPath = m.group(1).replace("&amp;", "&");
-                        HttpRequest req = HttpRequest.newBuilder()
-                            .uri(URI.create("https://www.agoda.com" + apiPath))
-                            .header("Accept-Language", "ko-KR")
-                            .timeout(Duration.ofSeconds(8))
-                            .GET()
-                            .build();
-                        HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
-                        JsonNode root = mapper.readTree(resp.body());
-                        JsonNode priceNode = root.path("rooms").get(0)
-                            .path("directPrice").path("originalPrice");
-                        if (priceNode.isNumber()) price = priceNode.asDouble();
-                    }
-                }
-            }
-        }
-
-        return new PriceInfo(hotelName, price, isSoldOut);
+        Element script = doc.selectFirst("script[data-selenium=script-initparam]");
+        String apiPath = script.html().split("apiUrl\\s*=\\s*\"")[1]
+            .split("\"")[0].replace("&amp;", "&");
+        HttpRequest req = HttpRequest.newBuilder()
+            .uri(URI.create("https://www.agoda.com" + apiPath))
+            .header("Accept-Language", "ko-KR")
+            .timeout(Duration.ofSeconds(8))
+            .GET().build();
+        HttpResponse<String> res = http.send(req, HttpResponse.BodyHandlers.ofString());
+        return mapper.readTree(res.body());
     }
 
     private List<CidEntry> buildCidList() {
@@ -189,16 +165,8 @@ public class ConvertController {
     }
 
     public static record CidEntry(String label, int cid) {}
-    public static record LinkInfo(String label, int cid, String url, double price, boolean isSoldOut) {}
+    public static record LinkInfo(
+        String label, int cid, String url, double price, boolean isSoldOut
+    ) {}
     public static record AffiliateLink(String label, String url) {}
-    private static class PriceInfo {
-        final String hotelName;
-        final double price;
-        final boolean isSoldOut;
-        PriceInfo(String hotelName, double price, boolean isSoldOut) {
-            this.hotelName = hotelName;
-            this.price = price;
-            this.isSoldOut = isSoldOut;
-        }
-    }
 }
