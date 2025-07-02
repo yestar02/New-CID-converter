@@ -72,11 +72,14 @@ public class ConvertController {
     );
 
     private final ObjectMapper mapper = new ObjectMapper();
-    private final HttpClient httpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(5))
-        // 빈 CookieManager로 쿠키 무시
-        .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE))
-        .build();
+
+    // 쿠키 무시용 HttpClient (세션 격리)
+    private HttpClient newHttpClient() {
+        return HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE))
+            .build();
+    }
 
     @PostMapping(value = "/convert", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> convert(@RequestBody Map<String, String> body) {
@@ -92,13 +95,10 @@ public class ConvertController {
 
         List<CidEntry> cidList = buildCidList();  // 무작위 CID 5개 추가
         List<LinkInfo> results = new ArrayList<>();
-
-        // 순차 처리로 결과 누락 및 순서 보장
         for (CidEntry entry : cidList) {
-            fetchWithRetry(url, entry, results);
+            fetchForCid(url, entry, results);
         }
 
-        // 호텔명 및 최저가 선정
         String hotelName = results.stream()
             .map(LinkInfo::getHotel)
             .filter(Objects::nonNull)
@@ -119,93 +119,72 @@ public class ConvertController {
         ));
     }
 
-    private void fetchWithRetry(String baseUrl, CidEntry entry, List<LinkInfo> results) {
+    private void fetchForCid(String baseUrl, CidEntry entry, List<LinkInfo> results) {
+        HttpClient client = newHttpClient();  // 세션별 HttpClient
         String modUrl = baseUrl.replaceAll("cid=-?\\d+", "cid=" + entry.cid());
-        int attempts = 3;
 
-        for (int i = 1; i <= attempts; i++) {
-            try {
-                JsonNode root = fetchSecondaryDataJson(modUrl);
+        try {
+            // 1) 페이지 HTML 로드 → script-initparam 재파싱
+            Document doc = Jsoup.connect(modUrl)
+                .header("Accept-Language","ko-KR,ko;q=0.9,en;q=0.8")
+                .header("User-Agent","Mozilla/5.0")
+                .timeout((int)Duration.ofSeconds(15).toMillis())
+                .get();
 
-                String hotel = root.path("hotelInfo").path("name").asText(null);
+            Element script = doc.selectFirst("script[data-selenium=script-initparam]");
+            if (script == null) throw new IllegalStateException("script-initparam 없음");
+            String content = script.data().isEmpty() ? script.text() : script.data();
+            String[] parts = content.split("apiUrl\\s*=\\s*\"");
+            if (parts.length < 2) throw new IllegalStateException("apiUrl 패턴 없음");
+            String apiPath = parts[1].split("\"")[0].replace("&amp;", "&");
 
-                // 1) mosaicInitData.discount.cheapestPrice (숫자 타입)
-                double price = root.path("mosaicInitData")
-                                   .path("discount")
-                                   .path("cheapestPrice")
-                                   .asDouble(0);
+            // KRW, price_view=2 보장
+            if (!apiPath.contains("currencyCode=")) apiPath += "&currencyCode=KRW";
+            if (!apiPath.contains("price_view="))   apiPath += "&price_view=2";
 
-                // 2) 가격이 0이면 stickyFooter 경로로 fallback
-                if (price == 0) {
-                    String raw = root.path("stickyFooter")
-                                     .path("discount")
-                                     .path("cheapestPriceWithCurrency")
-                                     .asText("");
-                    String numeric = raw.replaceAll("[^0-9]", "");
-                    price = numeric.isBlank() ? 0 : Double.parseDouble(numeric);
-                }
+            String apiUrl = "https://www.agoda.com" + apiPath;
 
-                boolean soldOut = price == 0;
-                results.add(new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel));
-                return;
+            // 2) API 호출
+            HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(apiUrl))
+                .header("Accept-Language","ko-KR,ko;q=0.9,en;q=0.8")
+                .header("User-Agent","Mozilla/5.0")
+                .header("Referer", modUrl)
+                .timeout(Duration.ofSeconds(20))
+                .GET()
+                .build();
 
-            } catch (Exception e) {
-                if (i == attempts) {
-                    // 마지막 시도에서도 실패 시 sold out 처리
-                    results.add(new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null));
-                } else {
-                    try { Thread.sleep(1000L * i); } catch (InterruptedException ignored) {}
-                }
+            HttpResponse<String> resp = client.send(req,
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            JsonNode root = mapper.readTree(resp.body());
+
+            // 3) 가격 및 호텔명 추출
+            String hotel = root.path("hotelInfo").path("name").asText(null);
+            double price = root.path("mosaicInitData")
+                               .path("discount")
+                               .path("cheapestPrice")
+                               .asDouble(0);
+            if (price == 0) {
+                String raw = root.path("stickyFooter")
+                                 .path("discount")
+                                 .path("cheapestPriceWithCurrency")
+                                 .asText("");
+                String num = raw.replaceAll("[^0-9]", "");
+                price = num.isBlank() ? 0 : Double.parseDouble(num);
             }
+            boolean soldOut = price == 0;
+            results.add(new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel));
+
+        } catch (Exception e) {
+            results.add(new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null));
         }
-    }
-
-    private JsonNode fetchSecondaryDataJson(String hotelPageUrl) throws Exception {
-        Document doc = Jsoup.connect(hotelPageUrl)
-            .header("Accept-Language","ko-KR,ko;q=0.9,en;q=0.8")
-            .header("User-Agent","Mozilla/5.0")
-            .timeout((int)Duration.ofSeconds(15).toMillis())
-            .get();
-
-        Element script = doc.selectFirst("script[data-selenium=script-initparam]");
-        if (script == null) {
-            throw new IllegalStateException("script-initparam 태그를 찾을 수 없습니다: " + hotelPageUrl);
-        }
-
-        String content = script.data().isEmpty() ? script.text() : script.data();
-        String apiPath = content.split("apiUrl\\s*=\\s*\"")[1]
-                                .split("\"")[0]
-                                .replace("&amp;", "&");
-
-        // 한화 표시 및 상세 가격 모드 보장
-        if (!apiPath.contains("currencyCode=")) apiPath += "&currencyCode=KRW";
-        if (!apiPath.contains("price_view="))   apiPath += "&price_view=2";
-
-        String apiUrl = "https://www.agoda.com" + apiPath;
-
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(apiUrl))
-            .header("Accept-Language","ko-KR,ko;q=0.9,en;q=0.8")
-            .header("User-Agent","Mozilla/5.0")
-            .header("Referer", hotelPageUrl)
-            .timeout(Duration.ofSeconds(20))
-            .GET()
-            .build();
-
-        HttpResponse<String> response = httpClient.send(
-            request,
-            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
-        );
-
-        return mapper.readTree(response.body());
     }
 
     private List<CidEntry> buildCidList() {
-        // 무작위 CID 5개 추가
         Set<Integer> rnd = new LinkedHashSet<>();
-        Random rand = new Random();
+        Random r = new Random();
         while (rnd.size() < 5) {
-            rnd.add(rand.nextInt(2000000 - 1800000 + 1) + 1800000);
+            rnd.add(r.nextInt(2000000 - 1800000 + 1) + 1800000);
         }
         List<CidEntry> list = new ArrayList<>(STATIC_CIDS);
         rnd.forEach(cid -> list.add(new CidEntry("AUTO-" + cid, cid)));
@@ -221,16 +200,10 @@ public class ConvertController {
         private final double price;
         private final boolean soldOut;
         private final String hotel;
-
         public LinkInfo(String label, int cid, String url, double price, boolean soldOut, String hotel) {
-            this.label = label;
-            this.cid = cid;
-            this.url = url;
-            this.price = price;
-            this.soldOut = soldOut;
-            this.hotel = hotel;
+            this.label = label; this.cid = cid; this.url = url;
+            this.price = price; this.soldOut = soldOut; this.hotel = hotel;
         }
-
         public String getLabel()   { return label; }
         public int getCid()        { return cid; }
         public String getUrl()     { return url; }
