@@ -1,5 +1,3 @@
-// src/main/java/com/example/agoda/controller/ConvertController.java
-
 package com.example.agoda.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -22,7 +20,6 @@ import java.util.regex.Pattern;
 @RequestMapping("/api")
 public class ConvertController {
 
-    // 고정 CID 목록 (구글2번/현대카드 반영)
     private static final List<CidEntry> STATIC_CIDS = List.of(
         new CidEntry("구글 지도 1",    1833982),
         new CidEntry("구글 지도 2",    1917614),
@@ -52,7 +49,6 @@ public class ConvertController {
         new CidEntry("에어서울",       1800120)
     );
 
-    // 제휴 바로가기 링크
     private static final List<AffiliateLink> AFFILIATES = List.of(
         new AffiliateLink("국민카드",       "https://www.agoda.com/ko-kr/kbcard"),
         new AffiliateLink("우리카드",       "https://www.agoda.com/ko-kr/wooricard"),
@@ -81,7 +77,7 @@ public class ConvertController {
     @PostMapping(value = "/convert", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> convert(@RequestBody Map<String, String> body) {
         String url = body.get("url");
-        // 입력 유효성 검사
+        // URL 유효성 검사
         if (url == null || url.trim().isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "주소를 입력해주세요."));
         } else if (!url.contains("agoda.com")) {
@@ -106,7 +102,9 @@ public class ConvertController {
                 }
                 Thread.sleep(200);
             } catch (Exception e) {
-                if (hotelName == null) hotelName = "호텔 이름을 찾는 중 오류 발생: " + e.getMessage();
+                if (hotelName == null) {
+                    hotelName = "호텔 이름을 찾는 중 오류 발생: " + e.getMessage();
+                }
             }
         }
 
@@ -116,13 +114,15 @@ public class ConvertController {
             .toList();
         LinkInfo cheapest = available.isEmpty() ? null : available.get(0);
 
-        return ResponseEntity.ok(Map.of(
-            "success", true,
-            "hotel", hotelName != null ? hotelName : "호텔 정보 없음",
-            "priced", results,
-            "cheapest", cheapest,
-            "affiliateLinks", AFFILIATES
-        ));
+        // Map.of 대신 HashMap 사용
+        Map<String, Object> response = new HashMap<>();
+        response.put("success", true);
+        response.put("hotel", hotelName != null ? hotelName : "호텔 정보 없음");
+        response.put("priced", results);
+        response.put("cheapest", cheapest); // null 허용
+        response.put("affiliateLinks", AFFILIATES);
+
+        return ResponseEntity.ok(response);
     }
 
     /** 가격 & 매진 정보 추출 */
@@ -151,7 +151,7 @@ public class ConvertController {
                 String txt = priceElem.text().replaceAll("[^0-9]", "");
                 if (!txt.isEmpty()) price = Double.parseDouble(txt);
             } else {
-                // HTML 방식 실패 시 API 폴백
+                // 폴백: API 호출
                 Element scriptTag = doc.selectFirst("script[data-selenium=script-initparam]");
                 if (scriptTag != null) {
                     String content = scriptTag.data().isEmpty() ? scriptTag.text() : scriptTag.data();
@@ -159,11 +159,11 @@ public class ConvertController {
                     if (m.find()) {
                         String apiPath = m.group(1).replace("&amp;", "&");
                         HttpRequest req = HttpRequest.newBuilder()
-                                .uri(URI.create("https://www.agoda.com" + apiPath))
-                                .header("Accept-Language", "ko-KR")
-                                .timeout(Duration.ofSeconds(8))
-                                .GET()
-                                .build();
+                            .uri(URI.create("https://www.agoda.com" + apiPath))
+                            .header("Accept-Language", "ko-KR")
+                            .timeout(Duration.ofSeconds(8))
+                            .GET()
+                            .build();
                         HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
                         JsonNode root = mapper.readTree(resp.body());
                         JsonNode priceNode = root.path("rooms").get(0)
