@@ -18,7 +18,6 @@ import java.util.*;
 @RequestMapping("/api")
 public class ConvertController {
 
-    // 고정 CID 목록 (구글2번/현대카드 반영)
     private static final List<CidEntry> STATIC_CIDS = List.of(
         new CidEntry("구글 지도 1",      1833982),
         new CidEntry("구글 지도 2",      1917614),
@@ -48,7 +47,6 @@ public class ConvertController {
         new CidEntry("에어서울",         1800120)
     );
 
-    // 제휴 링크 목록
     private static final List<AffiliateLink> AFFILIATES = List.of(
         new AffiliateLink("국민카드",       "https://www.agoda.com/ko-kr/kbcard"),
         new AffiliateLink("우리카드",       "https://www.agoda.com/ko-kr/wooricard"),
@@ -56,7 +54,7 @@ public class ConvertController {
         new AffiliateLink("현대카드",       "https://www.agoda.com/ko-kr/hyundaicard"),
         new AffiliateLink("BC카드",         "https://www.agoda.com/ko-kr/bccard"),
         new AffiliateLink("신한카드",       "https://www.agoda.com/ko-kr/shinhancard"),
-        new AffiliateLink("신한카드(마스터)", "https://www.agoda.com/ko-kr/shinhanmaster"),
+        new AffiliateLink("신한카드(마스터)","https://www.agoda.com/ko-kr/shinhanmaster"),
         new AffiliateLink("토스",           "https://www.agoda.com/ko-kr/tossbank"),
         new AffiliateLink("하나카드",       "https://www.agoda.com/ko-kr/hanacard"),
         new AffiliateLink("카카오페이",     "https://www.agoda.com/ko-kr/kakaopay"),
@@ -74,19 +72,20 @@ public class ConvertController {
         .build();
 
     @PostMapping(value = "/convert", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<?> convert(@RequestBody Map<String, String> body) throws Exception {
+    public ResponseEntity<?> convert(@RequestBody Map<String, String> body) {
         String url = body.get("url");
         if (url == null || url.trim().isEmpty()) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "주소를 입력해주세요."));
-        }
-        if (!url.contains("agoda.com")) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "아고다 주소가 아닌 것 같습니다."));
-        }
-        if (url.contains("/search")) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "검색 페이지 URL은 사용할 수 없습니다."));
-        }
-        if (!url.contains("cid=")) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "주소에서 cid 값을 찾을 수 없습니다."));
+            return ResponseEntity.badRequest()
+                .body(Map.of("success", false, "message", "주소를 입력해주세요."));
+        } else if (!url.contains("agoda.com")) {
+            return ResponseEntity.badRequest()
+                .body(Map.of("success", false, "message", "아고다 주소가 아닌 것 같습니다."));
+        } else if (url.contains("/search")) {
+            return ResponseEntity.badRequest()
+                .body(Map.of("success", false, "message", "검색 페이지 URL은 사용할 수 없습니다."));
+        } else if (!url.contains("cid=")) {
+            return ResponseEntity.badRequest()
+                .body(Map.of("success", false, "message", "주소에서 cid 값을 찾을 수 없습니다."));
         }
 
         List<CidEntry> cidList = buildCidList();
@@ -97,22 +96,22 @@ public class ConvertController {
             String modUrl = url.replaceAll("cid=-?\\d+", "cid=" + entry.cid);
             try {
                 JsonNode root = fetchApiJson(modUrl);
-                // 호텔명
+
                 if (hotelName == null) {
                     JsonNode nameNode = root.path("hotelInfo").path("name");
                     hotelName = nameNode.isTextual() ? nameNode.asText() : "호텔명 없음";
                 }
-                // 가격값 문자열로 불러오기
-                String priceStr = root.path("discount").path("cheapestPrice").asText("0");
-                // 쉼표 제거 후 숫자 변환
-                String digits = priceStr.replaceAll("[^0-9]", "");
-                double price = digits.isEmpty() ? 0 : Double.parseDouble(digits);
+
+                double price = root.path("discount").path("cheapestPrice").asDouble(0);
                 boolean isSoldOut = price == 0;
-                results.add(new LinkInfo(entry.label, entry.cid, modUrl, price, isSoldOut));
+
+                results.add(new LinkInfo(
+                    entry.label, entry.cid, modUrl, price, isSoldOut
+                ));
                 Thread.sleep(200);
             } catch (Exception e) {
                 if (hotelName == null) {
-                    hotelName = "호텔 이름을 찾는 중 오류: " + e.getMessage();
+                    hotelName = "호텔명 추출 중 오류: " + e.getMessage();
                 }
             }
         }
@@ -135,19 +134,25 @@ public class ConvertController {
     private JsonNode fetchApiJson(String url) throws Exception {
         Document doc = Jsoup.connect(url)
             .header("Accept-Language", "ko-KR")
-            .timeout(Duration.ofSeconds(10))
+            // Jsoup.timeout 은 int 밀리초를 요구하므로 toMillis() 후 int 캐스팅
+            .timeout((int) Duration.ofSeconds(10).toMillis())
             .get();
+
         Element script = doc.selectFirst("script[data-selenium=script-initparam]");
-        String content = script == null ? "" : script.data().isEmpty() ? script.text() : script.data();
-        String apiPath = content.split("apiUrl\\s*=\\s*\"")[1].split("\"")[0].replace("&amp;", "&");
-        HttpRequest req = HttpRequest.newBuilder()
+        String content = script == null ? "" :
+            (script.data().isEmpty() ? script.text() : script.data());
+        String apiPath = content.split("apiUrl\\s*=\\s*\"")[1]
+            .split("\"")[0].replace("&amp;", "&");
+
+        HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://www.agoda.com" + apiPath))
             .header("Accept-Language", "ko-KR")
             .timeout(Duration.ofSeconds(8))
             .GET()
             .build();
-        HttpResponse<String> res = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-        return mapper.readTree(res.body());
+        HttpResponse<String> response = httpClient.send(
+            request, HttpResponse.BodyHandlers.ofString());
+        return mapper.readTree(response.body());
     }
 
     private List<CidEntry> buildCidList() {
