@@ -1,3 +1,4 @@
+// src/main/java/com/example/agoda/controller/ConvertController.java
 package com.example.agoda.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -48,22 +49,22 @@ public class ConvertController {
     );
 
     private static final List<AffiliateLink> AFFILIATES = List.of(
-        new AffiliateLink("국민카드",       "https://www.agoda.com/ko-kr/kbcard"),
-        new AffiliateLink("우리카드",       "https://www.agoda.com/ko-kr/wooricard"),
+        new AffiliateLink("국민카드",   "https://www.agoda.com/ko-kr/kbcard"),
+        new AffiliateLink("우리카드",   "https://www.agoda.com/ko-kr/wooricard"),
         new AffiliateLink("우리카드(마스터)","https://www.agoda.com/ko-kr/wooricardmaster"),
-        new AffiliateLink("현대카드",       "https://www.agoda.com/ko-kr/hyundaicard"),
-        new AffiliateLink("BC카드",         "https://www.agoda.com/ko-kr/bccard"),
-        new AffiliateLink("신한카드",       "https://www.agoda.com/ko-kr/shinhancard"),
+        new AffiliateLink("현대카드",   "https://www.agoda.com/ko-kr/hyundaicard"),
+        new AffiliateLink("BC카드",     "https://www.agoda.com/ko-kr/bccard"),
+        new AffiliateLink("신한카드",   "https://www.agoda.com/ko-kr/shinhancard"),
         new AffiliateLink("신한카드(마스터)","https://www.agoda.com/ko-kr/shinhanmaster"),
-        new AffiliateLink("토스",           "https://www.agoda.com/ko-kr/tossbank"),
-        new AffiliateLink("하나카드",       "https://www.agoda.com/ko-kr/hanacard"),
-        new AffiliateLink("카카오페이",     "https://www.agoda.com/ko-kr/kakaopay"),
-        new AffiliateLink("마스터카드",     "https://www.agoda.com/ko-kr/krmastercard"),
-        new AffiliateLink("유니온페이",     "https://www.agoda.com/ko-kr/unionpayKR"),
-        new AffiliateLink("비자",           "https://www.agoda.com/ko-kr/visakorea"),
-        new AffiliateLink("대한항공",       "https://www.agoda.com/ko-kr/koreanair"),
-        new AffiliateLink("아시아나항공",   "https://www.agoda.com/ko-kr/flyasiana"),
-        new AffiliateLink("에어서울",       "https://www.agoda.com/ko-kr/airseoul")
+        new AffiliateLink("토스",       "https://www.agoda.com/ko-kr/tossbank"),
+        new AffiliateLink("하나카드",   "https://www.agoda.com/ko-kr/hanacard"),
+        new AffiliateLink("카카오페이","https://www.agoda.com/ko-kr/kakaopay"),
+        new AffiliateLink("마스터카드","https://www.agoda.com/ko-kr/krmastercard"),
+        new AffiliateLink("유니온페이","https://www.agoda.com/ko-kr/unionpayKR"),
+        new AffiliateLink("비자",       "https://www.agoda.com/ko-kr/visakorea"),
+        new AffiliateLink("대한항공",   "https://www.agoda.com/ko-kr/koreanair"),
+        new AffiliateLink("아시아나항공","https://www.agoda.com/ko-kr/flyasiana"),
+        new AffiliateLink("에어서울",   "https://www.agoda.com/ko-kr/airseoul")
     );
 
     private final ObjectMapper mapper = new ObjectMapper();
@@ -75,17 +76,13 @@ public class ConvertController {
     public ResponseEntity<?> convert(@RequestBody Map<String, String> body) {
         String url = body.get("url");
         if (url == null || url.trim().isEmpty()) {
-            return ResponseEntity.badRequest()
-                .body(Map.of("success", false, "message", "주소를 입력해주세요."));
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "주소를 입력해주세요."));
         } else if (!url.contains("agoda.com")) {
-            return ResponseEntity.badRequest()
-                .body(Map.of("success", false, "message", "아고다 주소가 아닌 것 같습니다."));
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "아고다 주소가 아닌 것 같습니다."));
         } else if (url.contains("/search")) {
-            return ResponseEntity.badRequest()
-                .body(Map.of("success", false, "message", "검색 페이지 URL은 사용할 수 없습니다."));
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "검색 페이지 URL은 사용할 수 없습니다."));
         } else if (!url.contains("cid=")) {
-            return ResponseEntity.badRequest()
-                .body(Map.of("success", false, "message", "주소에서 cid 값을 찾을 수 없습니다."));
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "주소에서 cid 값을 찾을 수 없습니다."));
         }
 
         List<CidEntry> cidList = buildCidList();
@@ -93,27 +90,25 @@ public class ConvertController {
         String hotelName = null;
 
         for (CidEntry entry : cidList) {
-            String modifiedUrl = url.replaceAll("cid=-?\\d+", "cid=" + entry.cid);
+            String modUrl = url.replaceAll("cid=-?\\d+", "cid=" + entry.cid);
             try {
-                JsonNode root = fetchApiJson(modifiedUrl);
+                JsonNode root = fetchSecondaryDataJson(modUrl);
 
-                // 호텔명 추출
+                // 호텔명 추출 (루트 바로 아래)
                 if (hotelName == null) {
                     JsonNode nameNode = root.path("hotelInfo").path("name");
                     hotelName = nameNode.isTextual() ? nameNode.asText() : "호텔명 없음";
                 }
 
-                // 가격 추출 (콤마 제거 후 숫자 파싱)
-                JsonNode priceNode = root.path("discount").path("cheapestPrice");
+                // 가격 추출 (inquiryProperty.cheapestPrice), 콤마 제거 후 파싱
+                JsonNode priceNode = root.path("inquiryProperty").path("cheapestPrice");
                 String priceText = priceNode.isTextual()
                     ? priceNode.asText().replaceAll(",", "")
                     : "0";
                 double price = priceText.isEmpty() ? 0 : Double.parseDouble(priceText);
                 boolean isSoldOut = price == 0;
 
-                results.add(new LinkInfo(
-                    entry.label, entry.cid, modifiedUrl, price, isSoldOut
-                ));
+                results.add(new LinkInfo(entry.label, entry.cid, modUrl, price, isSoldOut));
                 Thread.sleep(200);
             } catch (Exception e) {
                 if (hotelName == null) {
@@ -137,25 +132,26 @@ public class ConvertController {
         return ResponseEntity.ok(resp);
     }
 
-    private JsonNode fetchApiJson(String url) throws Exception {
-        Document doc = Jsoup.connect(url)
+    private JsonNode fetchSecondaryDataJson(String hotelPageUrl) throws Exception {
+        Document doc = Jsoup.connect(hotelPageUrl)
             .header("Accept-Language", "ko-KR")
             .timeout((int) Duration.ofSeconds(10).toMillis())
             .get();
-        Element script = doc.selectFirst("script[data-selenium=script-initparam]");
-        String content = script == null
-            ? ""
-            : script.data().isEmpty() ? script.text() : script.data();
+        Element scriptTag = doc.selectFirst("script[data-selenium=script-initparam]");
+        String content = scriptTag != null
+            ? (scriptTag.data().isEmpty() ? scriptTag.text() : scriptTag.data())
+            : "";
         String apiPath = content.split("apiUrl\\s*=\\s*\"")[1]
-            .split("\"")[0].replace("&amp;", "&");
-
-        HttpRequest req = HttpRequest.newBuilder()
-            .uri(URI.create("https://www.agoda.com" + apiPath))
+                             .split("\"")[0]
+                             .replace("&amp;", "&");
+        String secondaryUrl = "https://www.agoda.com" + apiPath
+            + "&hotel_id=165314&all=false";
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(secondaryUrl))
             .header("Accept-Language", "ko-KR")
             .timeout(Duration.ofSeconds(8))
-            .GET()
-            .build();
-        HttpResponse<String> res = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            .GET().build();
+        HttpResponse<String> res = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         return mapper.readTree(res.body());
     }
 
