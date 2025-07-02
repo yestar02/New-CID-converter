@@ -93,20 +93,26 @@ public class ConvertController {
         String hotelName = null;
 
         for (CidEntry entry : cidList) {
-            String modUrl = url.replaceAll("cid=-?\\d+", "cid=" + entry.cid);
+            String modifiedUrl = url.replaceAll("cid=-?\\d+", "cid=" + entry.cid);
             try {
-                JsonNode root = fetchApiJson(modUrl);
+                JsonNode root = fetchApiJson(modifiedUrl);
 
+                // 호텔명 추출
                 if (hotelName == null) {
                     JsonNode nameNode = root.path("hotelInfo").path("name");
                     hotelName = nameNode.isTextual() ? nameNode.asText() : "호텔명 없음";
                 }
 
-                double price = root.path("discount").path("cheapestPrice").asDouble(0);
+                // 가격 추출 (콤마 제거 후 숫자 파싱)
+                JsonNode priceNode = root.path("discount").path("cheapestPrice");
+                String priceText = priceNode.isTextual()
+                    ? priceNode.asText().replaceAll(",", "")
+                    : "0";
+                double price = priceText.isEmpty() ? 0 : Double.parseDouble(priceText);
                 boolean isSoldOut = price == 0;
 
                 results.add(new LinkInfo(
-                    entry.label, entry.cid, modUrl, price, isSoldOut
+                    entry.label, entry.cid, modifiedUrl, price, isSoldOut
                 ));
                 Thread.sleep(200);
             } catch (Exception e) {
@@ -134,25 +140,23 @@ public class ConvertController {
     private JsonNode fetchApiJson(String url) throws Exception {
         Document doc = Jsoup.connect(url)
             .header("Accept-Language", "ko-KR")
-            // Jsoup.timeout 은 int 밀리초를 요구하므로 toMillis() 후 int 캐스팅
             .timeout((int) Duration.ofSeconds(10).toMillis())
             .get();
-
         Element script = doc.selectFirst("script[data-selenium=script-initparam]");
-        String content = script == null ? "" :
-            (script.data().isEmpty() ? script.text() : script.data());
+        String content = script == null
+            ? ""
+            : script.data().isEmpty() ? script.text() : script.data();
         String apiPath = content.split("apiUrl\\s*=\\s*\"")[1]
             .split("\"")[0].replace("&amp;", "&");
 
-        HttpRequest request = HttpRequest.newBuilder()
+        HttpRequest req = HttpRequest.newBuilder()
             .uri(URI.create("https://www.agoda.com" + apiPath))
             .header("Accept-Language", "ko-KR")
             .timeout(Duration.ofSeconds(8))
             .GET()
             .build();
-        HttpResponse<String> response = httpClient.send(
-            request, HttpResponse.BodyHandlers.ofString());
-        return mapper.readTree(response.body());
+        HttpResponse<String> res = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+        return mapper.readTree(res.body());
     }
 
     private List<CidEntry> buildCidList() {
