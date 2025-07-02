@@ -3,40 +3,64 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
                              http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
+
+  <!-- 1) Spring Boot Parent 선언 -->
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.1.2</version>
+    <relativePath/>
+  </parent>
+
   <groupId>com.example.agoda</groupId>
   <artifactId>agoda-cid-converter</artifactId>
   <version>1.0.0</version>
+  <packaging>jar</packaging>
+
   <properties>
     <java.version>17</java.version>
-    <spring.boot.version>3.1.2</spring.boot.version>
-    <maven.compiler.plugin.version>3.14.0</maven.compiler.plugin.version>
   </properties>
+
   <dependencies>
+    <!-- Spring Web -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-web</artifactId>
-      <version>${spring.boot.version}</version>
     </dependency>
+    <!-- HTML 파싱용 Jsoup -->
     <dependency>
       <groupId>org.jsoup</groupId>
       <artifactId>jsoup</artifactId>
       <version>1.15.3</version>
     </dependency>
   </dependencies>
+
   <build>
     <plugins>
+      <!-- 2) Maven Compiler 설정 -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
-        <version>${maven.compiler.plugin.version}</version>
         <configuration>
           <release>${java.version}</release>
         </configuration>
       </plugin>
+      <!-- 3) Spring Boot 재패키징 설정 -->
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
-        <version>${spring.boot.version}</version>
+        <configuration>
+          <!-- 애플리케이션 진입점 클래스 지정 (필요 시) -->
+          <mainClass>com.example.agoda.AgodaCidConverterApplication</mainClass>
+        </configuration>
+        <executions>
+          <execution>
+            <goals>
+              <!-- package 단계 이후 재패키징 -->
+              <goal>repackage</goal>
+            </goals>
+          </execution>
+        </executions>
       </plugin>
     </plugins>
   </build>
