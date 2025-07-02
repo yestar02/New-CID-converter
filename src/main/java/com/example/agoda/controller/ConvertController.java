@@ -9,17 +9,20 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.net.CookieManager;
+import java.net.CookiePolicy;
 import java.net.URI;
 import java.net.http.*;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.*;
 
 @RestController
 @RequestMapping("/api")
 public class ConvertController {
 
-    // (1) 고정 CID 목록은 그대로 유지
+    // 고정 CID 목록 (전체 유지)
     private static final List<CidEntry> STATIC_CIDS = List.of(
         new CidEntry("구글 지도 1",    1833982),
         new CidEntry("구글 지도 2",    1917614),
@@ -49,31 +52,33 @@ public class ConvertController {
         new CidEntry("에어서울",       1800120)
     );
 
+    // 제휴 링크 목록
     private static final List<AffiliateLink> AFFILIATES = List.of(
-        new AffiliateLink("국민카드","https://www.agoda.com/ko-kr/kbcard"),
-        new AffiliateLink("우리카드","https://www.agoda.com/ko-kr/wooricard"),
-        new AffiliateLink("우리카드(마스터)","https://www.agoda.com/ko-kr/wooricardmaster"),
-        new AffiliateLink("현대카드","https://www.agoda.com/ko-kr/hyundaicard"),
-        new AffiliateLink("BC카드","https://www.agoda.com/ko-kr/bccard"),
-        new AffiliateLink("신한카드","https://www.agoda.com/ko-kr/shinhancard"),
-        new AffiliateLink("신한카드(마스터)","https://www.agoda.com/ko-kr/shinhanmaster"),
-        new AffiliateLink("토스","https://www.agoda.com/ko-kr/tossbank"),
-        new AffiliateLink("하나카드","https://www.agoda.com/ko-kr/hanacard"),
-        new AffiliateLink("카카오페이","https://www.agoda.com/ko-kr/kakaopay"),
-        new AffiliateLink("마스터카드","https://www.agoda.com/ko-kr/krmastercard"),
-        new AffiliateLink("유니온페이","https://www.agoda.com/ko-kr/unionpayKR"),
-        new AffiliateLink("비자","https://www.agoda.com/ko-kr/visakorea"),
-        new AffiliateLink("대한항공","https://www.agoda.com/ko-kr/koreanair"),
-        new AffiliateLink("아시아나항공","https://www.agoda.com/ko-kr/flyasiana"),
-        new AffiliateLink("에어서울","https://www.agoda.com/ko-kr/airseoul")
+        new AffiliateLink("국민카드",       "https://www.agoda.com/ko-kr/kbcard"),
+        new AffiliateLink("우리카드",       "https://www.agoda.com/ko-kr/wooricard"),
+        new AffiliateLink("우리카드(마스터)", "https://www.agoda.com/ko-kr/wooricardmaster"),
+        new AffiliateLink("현대카드",       "https://www.agoda.com/ko-kr/hyundaicard"),
+        new AffiliateLink("BC카드",         "https://www.agoda.com/ko-kr/bccard"),
+        new AffiliateLink("신한카드",       "https://www.agoda.com/ko-kr/shinhancard"),
+        new AffiliateLink("신한카드(마스터)", "https://www.agoda.com/ko-kr/shinhanmaster"),
+        new AffiliateLink("토스",           "https://www.agoda.com/ko-kr/tossbank"),
+        new AffiliateLink("하나카드",       "https://www.agoda.com/ko-kr/hanacard"),
+        new AffiliateLink("카카오페이",     "https://www.agoda.com/ko-kr/kakaopay"),
+        new AffiliateLink("마스터카드",     "https://www.agoda.com/ko-kr/krmastercard"),
+        new AffiliateLink("유니온페이",     "https://www.agoda.com/ko-kr/unionpayKR"),
+        new AffiliateLink("비자",           "https://www.agoda.com/ko-kr/visakorea"),
+        new AffiliateLink("대한항공",       "https://www.agoda.com/ko-kr/koreanair"),
+        new AffiliateLink("아시아나항공",   "https://www.agoda.com/ko-kr/flyasiana"),
+        new AffiliateLink("에어서울",       "https://www.agoda.com/ko-kr/airseoul")
     );
 
     private final ObjectMapper mapper = new ObjectMapper();
-    // (2) 쿠키를 사용하지 않도록 cookieHandler를 null로 설정
     private final HttpClient httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(5))
-        .cookieHandler(null)
+        // 빈 CookieManager로 쿠키 무시
+        .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE))
         .build();
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(8);
 
     @PostMapping(value = "/convert", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> convert(@RequestBody Map<String, String> body) {
@@ -87,9 +92,11 @@ public class ConvertController {
                 .body(Map.of("success", false, "message", "유효한 아고다 상세 URL을 입력해주세요."));
         }
 
-        // (3) 순차 처리로 결과 순서 유지 및 누락 방지
+        // 무작위 CID 5개 추가
         List<CidEntry> cidList = buildCidList();
         List<LinkInfo> results = new ArrayList<>();
+
+        // 순차 처리로 누락 방지
         for (CidEntry entry : cidList) {
             fetchWithRetry(url, entry, results);
         }
@@ -121,13 +128,16 @@ public class ConvertController {
             try {
                 JsonNode root = fetchSecondaryDataJson(modUrl);
 
+                // 호텔명
                 String hotel = root.path("hotelInfo").path("name").asText(null);
 
-                // (4) KRW로 표기되도록 currencyCode=KRW, price_view=2 파라미터 추가
+                // 1) mosaicInitData.discount.cheapestPrice (숫자)
                 double price = root.path("mosaicInitData")
                                    .path("discount")
                                    .path("cheapestPrice")
                                    .asDouble(0);
+
+                // 2) 값이 0이면 stickyFooter 경로로 fallback
                 if (price == 0) {
                     String raw = root.path("stickyFooter")
                                      .path("discount")
@@ -140,7 +150,7 @@ public class ConvertController {
                 boolean soldOut = price == 0;
                 results.add(new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel));
                 return;
-            } catch (Exception ex) {
+            } catch (Exception e) {
                 if (i == attempts) {
                     results.add(new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null));
                 } else {
@@ -152,38 +162,38 @@ public class ConvertController {
 
     private JsonNode fetchSecondaryDataJson(String hotelPageUrl) throws Exception {
         Document doc = Jsoup.connect(hotelPageUrl)
-            .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
-            .header("User-Agent", "Mozilla/5.0")
+            .header("Accept-Language","ko-KR,ko;q=0.9,en;q=0.8")
+            .header("User-Agent","Mozilla/5.0")
             .timeout((int)Duration.ofSeconds(15).toMillis())
             .get();
         Element script = doc.selectFirst("script[data-selenium=script-initparam]");
         String content = script != null
             ? (script.data().isEmpty() ? script.text() : script.data())
             : "";
-        // script 내 apiUrl 그대로 사용
         String apiPath = content.split("apiUrl\\s*=\\s*\"")[1]
                                 .split("\"")[0]
                                 .replace("&amp;", "&");
-        // (4) currencyCode=KRW, price_view=2 파라미터 보장
+        // currencyCode=KRW, price_view=2 파라미터 보장
         if (!apiPath.contains("currencyCode=")) apiPath += "&currencyCode=KRW";
         if (!apiPath.contains("price_view="))   apiPath += "&price_view=2";
         String apiUrl = "https://www.agoda.com" + apiPath;
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(apiUrl))
-            .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
-            .header("User-Agent", "Mozilla/5.0")
+            .header("Accept-Language","ko-KR,ko;q=0.9,en;q=0.8")
+            .header("User-Agent","Mozilla/5.0")
             .header("Referer", hotelPageUrl)
             .timeout(Duration.ofSeconds(20))
             .GET()
             .build();
-        HttpResponse<String> response = httpClient.send(request,
-            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        HttpResponse<String> response = httpClient.send(
+            request,
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
+        );
         return mapper.readTree(response.body());
     }
 
     private List<CidEntry> buildCidList() {
-        // 무작위 CID 5개 추가
         Set<Integer> rnd = new LinkedHashSet<>();
         Random rand = new Random();
         while (rnd.size() < 5) {
@@ -203,10 +213,16 @@ public class ConvertController {
         private final double price;
         private final boolean soldOut;
         private final String hotel;
+
         public LinkInfo(String label, int cid, String url, double price, boolean soldOut, String hotel) {
-            this.label = label; this.cid = cid; this.url = url;
-            this.price = price; this.soldOut = soldOut; this.hotel = hotel;
+            this.label = label;
+            this.cid = cid;
+            this.url = url;
+            this.price = price;
+            this.soldOut = soldOut;
+            this.hotel = hotel;
         }
+
         public String getLabel()  { return label; }
         public int getCid()       { return cid; }
         public String getUrl()    { return url; }
