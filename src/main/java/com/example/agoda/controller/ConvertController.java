@@ -1,4 +1,3 @@
-// src/main/java/com/example/agoda/controller/ConvertController.java
 package com.example.agoda.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -20,32 +19,32 @@ import java.util.*;
 public class ConvertController {
 
     private static final List<CidEntry> STATIC_CIDS = List.of(
-        new CidEntry("구글 지도 1",      1833982),
-        new CidEntry("구글 지도 2",      1917614),
-        new CidEntry("구글 지도 3",      1829668),
-        new CidEntry("구글 검색 1",      1908617),
-        new CidEntry("구글 검색 2",      1921868),
-        new CidEntry("구글 검색 3",      1922847),
-        new CidEntry("네이버",           1881505),
-        new CidEntry("Bing",            1911217),
-        new CidEntry("다음",            1908762),
-        new CidEntry("DuckDuckGo",      1895204),
-        new CidEntry("국민카드",         1563295),
-        new CidEntry("우리카드",         1654104),
-        new CidEntry("우리카드(마스터)", 1932810),
-        new CidEntry("현대카드",         1768446),
-        new CidEntry("BC카드",           1748498),
-        new CidEntry("신한카드",         1760133),
-        new CidEntry("신한카드(마스터)", 1917257),
-        new CidEntry("토스",             1917334),
-        new CidEntry("하나카드",         1729471),
-        new CidEntry("카카오페이",       1845109),
-        new CidEntry("마스터카드",       1889572),
-        new CidEntry("유니온페이",       1801110),
-        new CidEntry("비자",             1889319),
-        new CidEntry("대한항공(적립)",   1904827),
+        new CidEntry("구글 지도 1",    1833982),
+        new CidEntry("구글 지도 2",    1917614),
+        new CidEntry("구글 지도 3",    1829668),
+        new CidEntry("구글 검색 1",    1908617),
+        new CidEntry("구글 검색 2",    1921868),
+        new CidEntry("구글 검색 3",    1922847),
+        new CidEntry("네이버",         1881505),
+        new CidEntry("Bing",          1911217),
+        new CidEntry("다음",          1908762),
+        new CidEntry("DuckDuckGo",    1895204),
+        new CidEntry("국민카드",       1563295),
+        new CidEntry("우리카드",       1654104),
+        new CidEntry("우리카드(마스터)",1932810),
+        new CidEntry("현대카드",       1768446),
+        new CidEntry("BC카드",         1748498),
+        new CidEntry("신한카드",       1760133),
+        new CidEntry("신한카드(마스터)",1917257),
+        new CidEntry("토스",           1917334),
+        new CidEntry("하나카드",       1729471),
+        new CidEntry("카카오페이",     1845109),
+        new CidEntry("마스터카드",     1889572),
+        new CidEntry("유니온페이",     1801110),
+        new CidEntry("비자",           1889319),
+        new CidEntry("대한항공(적립)", 1904827),
         new CidEntry("아시아나항공(적립)",1806212),
-        new CidEntry("에어서울",         1800120)
+        new CidEntry("에어서울",       1800120)
     );
 
     private static final List<AffiliateLink> AFFILIATES = List.of(
@@ -76,13 +75,17 @@ public class ConvertController {
     public ResponseEntity<?> convert(@RequestBody Map<String, String> body) {
         String url = body.get("url");
         if (url == null || url.trim().isEmpty()) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "주소를 입력해주세요."));
+            return ResponseEntity.badRequest()
+                .body(Map.of("success", false, "message", "주소를 입력해주세요."));
         } else if (!url.contains("agoda.com")) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "아고다 주소가 아닌 것 같습니다."));
+            return ResponseEntity.badRequest()
+                .body(Map.of("success", false, "message", "아고다 주소가 아닌 것 같습니다."));
         } else if (url.contains("/search")) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "검색 페이지 URL은 사용할 수 없습니다."));
+            return ResponseEntity.badRequest()
+                .body(Map.of("success", false, "message", "검색 페이지 URL은 사용할 수 없습니다."));
         } else if (!url.contains("cid=")) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "주소에서 cid 값을 찾을 수 없습니다."));
+            return ResponseEntity.badRequest()
+                .body(Map.of("success", false, "message", "주소에서 cid 값을 찾을 수 없습니다."));
         }
 
         List<CidEntry> cidList = buildCidList();
@@ -94,21 +97,19 @@ public class ConvertController {
             try {
                 JsonNode root = fetchSecondaryDataJson(modUrl);
 
-                // 호텔명 추출 (루트 바로 아래)
+                // 호텔명 추출
                 if (hotelName == null) {
                     JsonNode nameNode = root.path("hotelInfo").path("name");
                     hotelName = nameNode.isTextual() ? nameNode.asText() : "호텔명 없음";
                 }
 
-                // 가격 추출 (inquiryProperty.cheapestPrice), 콤마 제거 후 파싱
-                JsonNode priceNode = root.path("inquiryProperty").path("cheapestPrice");
-                String priceText = priceNode.isTextual()
-                    ? priceNode.asText().replaceAll(",", "")
-                    : "0";
-                double price = priceText.isEmpty() ? 0 : Double.parseDouble(priceText);
-                boolean isSoldOut = price == 0;
+                // 가격 추출 (콤마 제거)
+                JsonNode p = root.path("inquiryProperty").path("cheapestPrice");
+                String text = p.isTextual() ? p.asText().replaceAll(",", "") : "0";
+                double price = text.isEmpty() ? 0 : Double.parseDouble(text);
+                boolean soldOut = price == 0;
 
-                results.add(new LinkInfo(entry.label, entry.cid, modUrl, price, isSoldOut));
+                results.add(new LinkInfo(entry.label, entry.cid, modUrl, price, soldOut));
                 Thread.sleep(200);
             } catch (Exception e) {
                 if (hotelName == null) {
@@ -117,11 +118,11 @@ public class ConvertController {
             }
         }
 
-        List<LinkInfo> available = results.stream()
+        List<LinkInfo> avail = results.stream()
             .filter(r -> !r.isSoldOut && r.price > 0)
             .sorted(Comparator.comparingDouble(LinkInfo::price))
             .toList();
-        LinkInfo cheapest = available.isEmpty() ? null : available.get(0);
+        LinkInfo cheapest = avail.isEmpty() ? null : avail.get(0);
 
         Map<String, Object> resp = new HashMap<>();
         resp.put("success", true);
@@ -137,22 +138,23 @@ public class ConvertController {
             .header("Accept-Language", "ko-KR")
             .timeout((int) Duration.ofSeconds(10).toMillis())
             .get();
-        Element scriptTag = doc.selectFirst("script[data-selenium=script-initparam]");
-        String content = scriptTag != null
-            ? (scriptTag.data().isEmpty() ? scriptTag.text() : scriptTag.data())
+
+        Element s = doc.selectFirst("script[data-selenium=script-initparam]");
+        String c = s != null
+            ? (s.data().isEmpty() ? s.text() : s.data())
             : "";
-        String apiPath = content.split("apiUrl\\s*=\\s*\"")[1]
-                             .split("\"")[0]
-                             .replace("&amp;", "&");
-        String secondaryUrl = "https://www.agoda.com" + apiPath
+        String api = c.split("apiUrl\\s*=\\s*\"")[1]
+            .split("\"")[0].replace("&amp;", "&");
+        String secUrl = "https://www.agoda.com" + api
             + "&hotel_id=165314&all=false";
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(secondaryUrl))
+
+        HttpRequest req = HttpRequest.newBuilder()
+            .uri(URI.create(secUrl))
             .header("Accept-Language", "ko-KR")
             .timeout(Duration.ofSeconds(8))
             .GET().build();
-        HttpResponse<String> res = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        return mapper.readTree(res.body());
+        HttpResponse<String> r = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+        return mapper.readTree(r.body());
     }
 
     private List<CidEntry> buildCidList() {
@@ -161,9 +163,9 @@ public class ConvertController {
         while (rnd.size() < 50) {
             rnd.add(r.nextInt(2000000 - 1800000 + 1) + 1800000);
         }
-        List<CidEntry> list = new ArrayList<>(STATIC_CIDS);
-        rnd.forEach(cid -> list.add(new CidEntry("AUTO-" + cid, cid)));
-        return list;
+        List<CidEntry> l = new ArrayList<>(STATIC_CIDS);
+        rnd.forEach(cid -> l.add(new CidEntry("AUTO-" + cid, cid)));
+        return l;
     }
 
     public static record CidEntry(String label, int cid) {}
