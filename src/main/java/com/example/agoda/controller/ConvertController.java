@@ -14,13 +14,12 @@ import java.net.http.*;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.*;
 
 @RestController
 @RequestMapping("/api")
 public class ConvertController {
 
-    // 고정 CID 목록 (전체 유지)
+    // (1) 고정 CID 목록은 그대로 유지
     private static final List<CidEntry> STATIC_CIDS = List.of(
         new CidEntry("구글 지도 1",    1833982),
         new CidEntry("구글 지도 2",    1917614),
@@ -50,7 +49,6 @@ public class ConvertController {
         new CidEntry("에어서울",       1800120)
     );
 
-    // 제휴 링크 목록
     private static final List<AffiliateLink> AFFILIATES = List.of(
         new AffiliateLink("국민카드","https://www.agoda.com/ko-kr/kbcard"),
         new AffiliateLink("우리카드","https://www.agoda.com/ko-kr/wooricard"),
@@ -71,80 +69,79 @@ public class ConvertController {
     );
 
     private final ObjectMapper mapper = new ObjectMapper();
+    // (2) 쿠키를 사용하지 않도록 cookieHandler를 null로 설정
     private final HttpClient httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(5))
+        .cookieHandler(null)
         .build();
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(8);
 
     @PostMapping(value = "/convert", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> convert(@RequestBody Map<String, String> body) {
         String url = body.get("url");
         if (url == null || url.isBlank()) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "주소를 입력해주세요."));
+            return ResponseEntity.badRequest()
+                .body(Map.of("success", false, "message", "주소를 입력해주세요."));
         }
         if (!url.contains("agoda.com") || !url.contains("cid=")) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "유효한 아고다 상세 URL을 입력해주세요."));
+            return ResponseEntity.badRequest()
+                .body(Map.of("success", false, "message", "유효한 아고다 상세 URL을 입력해주세요."));
         }
 
-        // 무작위 CID 5개 추가
+        // (3) 순차 처리로 결과 순서 유지 및 누락 방지
         List<CidEntry> cidList = buildCidList();
-        List<LinkInfo> results = Collections.synchronizedList(new ArrayList<>());
+        List<LinkInfo> results = new ArrayList<>();
+        for (CidEntry entry : cidList) {
+            fetchWithRetry(url, entry, results);
+        }
 
-        // 병렬 호출 + 재시도
-        CompletableFuture<?>[] futures = cidList.stream()
-            .map(entry -> CompletableFuture.runAsync(() -> fetchWithRetry(url, entry, results), scheduler))
-            .toArray(CompletableFuture[]::new);
-        CompletableFuture.allOf(futures)
-            .completeOnTimeout(null, 20, TimeUnit.SECONDS)
-            .join();
-
-        // 호텔명 취합
         String hotelName = results.stream()
             .map(LinkInfo::getHotel)
             .filter(Objects::nonNull)
             .findFirst()
             .orElse("호텔명 없음");
 
-        // 최저가 선정
         LinkInfo cheapest = results.stream()
             .filter(r -> !r.isSoldOut() && r.getPrice() > 0)
             .min(Comparator.comparingDouble(LinkInfo::getPrice))
             .orElse(null);
 
-        Map<String,Object> resp = new HashMap<>();
-        resp.put("success", true);
-        resp.put("hotel", hotelName);
-        resp.put("priced", results);
-        resp.put("cheapest", cheapest);
-        resp.put("affiliateLinks", AFFILIATES);
-        return ResponseEntity.ok(resp);
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "hotel", hotelName,
+            "priced", results,
+            "cheapest", cheapest,
+            "affiliateLinks", AFFILIATES
+        ));
     }
 
     private void fetchWithRetry(String baseUrl, CidEntry entry, List<LinkInfo> results) {
         String modUrl = baseUrl.replaceAll("cid=-?\\d+", "cid=" + entry.cid());
-        int maxAttempts = 3;
-        for (int i = 1; i <= maxAttempts; i++) {
+        int attempts = 3;
+        for (int i = 1; i <= attempts; i++) {
             try {
                 JsonNode root = fetchSecondaryDataJson(modUrl);
 
-                // 호텔명
                 String hotel = root.path("hotelInfo").path("name").asText(null);
 
-                // 숫자로만 된 시작가 추출 (mosaicInitData.discount.cheapestPrice)
+                // (4) KRW로 표기되도록 currencyCode=KRW, price_view=2 파라미터 추가
                 double price = root.path("mosaicInitData")
                                    .path("discount")
                                    .path("cheapestPrice")
                                    .asDouble(0);
-                // 콤마 포함 문자열이 필요하다면:
-                // String raw = root.path("stickyFooter").path("discount").path("cheapestPriceWithCurrency").asText("");
-                // String numeric = raw.replaceAll("[^0-9]", "");
-                // price = numeric.isBlank() ? 0 : Double.parseDouble(numeric);
+                if (price == 0) {
+                    String raw = root.path("stickyFooter")
+                                     .path("discount")
+                                     .path("cheapestPriceWithCurrency")
+                                     .asText("");
+                    String numeric = raw.replaceAll("[^0-9]", "");
+                    price = numeric.isBlank() ? 0 : Double.parseDouble(numeric);
+                }
 
                 boolean soldOut = price == 0;
                 results.add(new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel));
                 return;
-            } catch (Exception e) {
-                if (i == maxAttempts) {
+            } catch (Exception ex) {
+                if (i == attempts) {
                     results.add(new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null));
                 } else {
                     try { Thread.sleep(1000L * i); } catch (InterruptedException ignored) {}
@@ -154,30 +151,34 @@ public class ConvertController {
     }
 
     private JsonNode fetchSecondaryDataJson(String hotelPageUrl) throws Exception {
-        // HTML 파싱 시 UTF-8 처리
         Document doc = Jsoup.connect(hotelPageUrl)
-            .header("Accept-Language","ko-KR,ko;q=0.9,en;q=0.8")
-            .header("User-Agent","Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
+            .header("User-Agent", "Mozilla/5.0")
             .timeout((int)Duration.ofSeconds(15).toMillis())
             .get();
         Element script = doc.selectFirst("script[data-selenium=script-initparam]");
         String content = script != null
             ? (script.data().isEmpty() ? script.text() : script.data())
             : "";
+        // script 내 apiUrl 그대로 사용
         String apiPath = content.split("apiUrl\\s*=\\s*\"")[1]
                                 .split("\"")[0]
-                                .replace("&amp;","&");
+                                .replace("&amp;", "&");
+        // (4) currencyCode=KRW, price_view=2 파라미터 보장
+        if (!apiPath.contains("currencyCode=")) apiPath += "&currencyCode=KRW";
+        if (!apiPath.contains("price_view="))   apiPath += "&price_view=2";
         String apiUrl = "https://www.agoda.com" + apiPath;
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(apiUrl))
-            .header("Accept-Language","ko-KR,ko;q=0.9,en;q=0.8")
-            .header("User-Agent","Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
+            .header("User-Agent", "Mozilla/5.0")
             .header("Referer", hotelPageUrl)
             .timeout(Duration.ofSeconds(20))
             .GET()
             .build();
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        HttpResponse<String> response = httpClient.send(request,
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         return mapper.readTree(response.body());
     }
 
@@ -202,22 +203,16 @@ public class ConvertController {
         private final double price;
         private final boolean soldOut;
         private final String hotel;
-
         public LinkInfo(String label, int cid, String url, double price, boolean soldOut, String hotel) {
-            this.label = label;
-            this.cid = cid;
-            this.url = url;
-            this.price = price;
-            this.soldOut = soldOut;
-            this.hotel = hotel;
+            this.label = label; this.cid = cid; this.url = url;
+            this.price = price; this.soldOut = soldOut; this.hotel = hotel;
         }
-
-        public String getLabel() { return label; }
-        public int getCid() { return cid; }
-        public String getUrl() { return url; }
-        public double getPrice() { return price; }
-        public boolean isSoldOut() { return soldOut; }
-        public String getHotel() { return hotel; }
+        public String getLabel()  { return label; }
+        public int getCid()       { return cid; }
+        public String getUrl()    { return url; }
+        public double getPrice()  { return price; }
+        public boolean isSoldOut(){ return soldOut; }
+        public String getHotel()  { return hotel; }
     }
 
     public static record AffiliateLink(String label, String url) {}
