@@ -53,22 +53,22 @@ public class ConvertController {
 
     // 제휴 링크 목록
     private static final List<AffiliateLink> AFFILIATES = List.of(
-        new AffiliateLink("국민카드",       "https://www.agoda.com/ko-kr/kbcard"),
-        new AffiliateLink("우리카드",       "https://www.agoda.com/ko-kr/wooricard"),
-        new AffiliateLink("우리카드(마스터)", "https://www.agoda.com/ko-kr/wooricardmaster"),
-        new AffiliateLink("현대카드",       "https://www.agoda.com/ko-kr/hyundaicard"),
-        new AffiliateLink("BC카드",         "https://www.agoda.com/ko-kr/bccard"),
-        new AffiliateLink("신한카드",       "https://www.agoda.com/ko-kr/shinhancard"),
-        new AffiliateLink("신한카드(마스터)", "https://www.agoda.com/ko-kr/shinhanmaster"),
-        new AffiliateLink("토스",           "https://www.agoda.com/ko-kr/tossbank"),
-        new AffiliateLink("하나카드",       "https://www.agoda.com/ko-kr/hanacard"),
-        new AffiliateLink("카카오페이",     "https://www.agoda.com/ko-kr/kakaopay"),
-        new AffiliateLink("마스터카드",     "https://www.agoda.com/ko-kr/krmastercard"),
-        new AffiliateLink("유니온페이",     "https://www.agoda.com/ko-kr/unionpayKR"),
-        new AffiliateLink("비자",           "https://www.agoda.com/ko-kr/visakorea"),
-        new AffiliateLink("대한항공",       "https://www.agoda.com/ko-kr/koreanair"),
-        new AffiliateLink("아시아나항공",   "https://www.agoda.com/ko-kr/flyasiana"),
-        new AffiliateLink("에어서울",       "https://www.agoda.com/ko-kr/airseoul")
+        new AffiliateLink("국민카드","https://www.agoda.com/ko-kr/kbcard"),
+        new AffiliateLink("우리카드","https://www.agoda.com/ko-kr/wooricard"),
+        new AffiliateLink("우리카드(마스터)","https://www.agoda.com/ko-kr/wooricardmaster"),
+        new AffiliateLink("현대카드","https://www.agoda.com/ko-kr/hyundaicard"),
+        new AffiliateLink("BC카드","https://www.agoda.com/ko-kr/bccard"),
+        new AffiliateLink("신한카드","https://www.agoda.com/ko-kr/shinhancard"),
+        new AffiliateLink("신한카드(마스터)","https://www.agoda.com/ko-kr/shinhanmaster"),
+        new AffiliateLink("토스","https://www.agoda.com/ko-kr/tossbank"),
+        new AffiliateLink("하나카드","https://www.agoda.com/ko-kr/hanacard"),
+        new AffiliateLink("카카오페이","https://www.agoda.com/ko-kr/kakaopay"),
+        new AffiliateLink("마스터카드","https://www.agoda.com/ko-kr/krmastercard"),
+        new AffiliateLink("유니온페이","https://www.agoda.com/ko-kr/unionpayKR"),
+        new AffiliateLink("비자","https://www.agoda.com/ko-kr/visakorea"),
+        new AffiliateLink("대한항공","https://www.agoda.com/ko-kr/koreanair"),
+        new AffiliateLink("아시아나항공","https://www.agoda.com/ko-kr/flyasiana"),
+        new AffiliateLink("에어서울","https://www.agoda.com/ko-kr/airseoul")
     );
 
     private final ObjectMapper mapper = new ObjectMapper();
@@ -82,7 +82,6 @@ public class ConvertController {
 
     @PostMapping(value = "/convert", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> convert(@RequestBody Map<String, String> body) {
-        // 요청 유효성 검사
         if (body == null || body.get("url") == null || body.get("url").isBlank()) {
             Map<String, Object> error = new HashMap<>();
             error.put("success", false);
@@ -129,7 +128,6 @@ public class ConvertController {
             HttpClient client = newHttpClient();
             String modUrl = baseUrl.replaceAll("cid=-?\\d+", "cid=" + entry.cid());
 
-            // 1) 페이지 HTML 로드 및 script-initparam 추출
             Document doc = Jsoup.connect(modUrl)
                 .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
                 .header("User-Agent", "Mozilla/5.0")
@@ -147,12 +145,10 @@ public class ConvertController {
             if (end < 0) throw new IllegalStateException("apiUrl 문자열 끝 없음");
             String apiPath = content.substring(start, end).replace("&amp;", "&");
 
-            // 2) 한화 및 시작가 모드 보장
             if (!apiPath.contains("currencyCode=")) apiPath += "&currencyCode=KRW";
             if (!apiPath.contains("price_view="))   apiPath += "&price_view=2";
             String apiUrl = "https://www.agoda.com" + apiPath;
 
-            // 3) API 호출
             HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(apiUrl))
                 .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
@@ -166,31 +162,20 @@ public class ConvertController {
 
             JsonNode root = mapper.readTree(resp.body());
 
-            // 4) 호텔명 추출
             String hotel = Optional.ofNullable(root.path("hotelInfo").path("name"))
                 .filter(JsonNode::isTextual)
                 .map(JsonNode::asText)
                 .orElse(null);
 
-            // 5) 가격 추출 (mosaicInitData.discount.cheapestPrice 먼저, 없으면 stickyFooter)
             double price = root.path("mosaicInitData")
                                .path("discount")
                                .path("cheapestPrice")
                                .asDouble(0);
-            if (price == 0) {
-                String raw = root.path("stickyFooter")
-                                 .path("discount")
-                                 .path("cheapestPriceWithCurrency")
-                                 .asText("");
-                String num = raw.replaceAll("[^0-9]", "");
-                if (!num.isBlank()) price = Double.parseDouble(num);
-            }
 
             boolean soldOut = price == 0;
             results.add(new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel));
 
         } catch (Exception e) {
-            // 오류 시 sold out 처리
             String failureUrl = baseUrl.replaceAll("cid=-?\\d+", "cid=" + entry.cid());
             results.add(new LinkInfo(entry.label(), entry.cid(), failureUrl, 0, true, null));
         }
@@ -208,7 +193,6 @@ public class ConvertController {
     }
 
     public static record CidEntry(String label, int cid) {}
-
     public static record LinkInfo(
         String label,
         int cid,
@@ -217,6 +201,5 @@ public class ConvertController {
         boolean soldOut,
         String hotel
     ) {}
-
     public static record AffiliateLink(String label, String url) {}
 }
