@@ -61,3 +61,31 @@ tr:nth-child(even) { background: #fafafa; }
   text-decoration: none;
 }
 #affList a:hover { text-decoration: underline; }
+
+/* 기존 CSS는 그대로 유지하고 아래 내용만 추가 */
+
+/* 매진 상태 스타일 */
+.sold-out {
+  color: #e74c3c;
+  font-weight: bold;
+  font-style: italic;
+}
+
+/* 예약 불가 메시지 스타일 */
+.no-available {
+  text-align: center;
+  color: #7f8c8d;
+  font-style: italic;
+  padding: 15px;
+}
+
+/* 매진된 행 전체 스타일 */
+tr:has(.sold-out) {
+  background-color: #fdf2f2;
+}
+
+/* CSS :has() 지원하지 않는 브라우저를 위한 대안 */
+.sold-out-row {
+  background-color: #fdf2f2;
+}
+

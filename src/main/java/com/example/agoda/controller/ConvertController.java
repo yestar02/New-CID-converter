@@ -6,6 +6,7 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
@@ -21,10 +22,10 @@ import java.util.regex.Pattern;
 @RequestMapping("/api")
 public class ConvertController {
 
-    // 고정 CID 목록 (구글 2번 수정, 우리카드 마스터 다음에 현대카드 추가)
+    // 고정 CID 목록 (구글2번/현대카드 반영)
     private static final List<CidEntry> STATIC_CIDS = List.of(
         new CidEntry("구글 지도 1",    1833982),
-        new CidEntry("구글 지도 2",    1917614),   // 변경된 값
+        new CidEntry("구글 지도 2",    1917614),
         new CidEntry("구글 지도 3",    1829668),
         new CidEntry("구글 검색 1",    1908617),
         new CidEntry("구글 검색 2",    1921868),
@@ -36,7 +37,7 @@ public class ConvertController {
         new CidEntry("국민카드",       1563295),
         new CidEntry("우리카드",       1654104),
         new CidEntry("우리카드(마스터)",1932810),
-        new CidEntry("현대카드",       1768446),    // 신규 항목
+        new CidEntry("현대카드",       1768446),
         new CidEntry("BC카드",         1748498),
         new CidEntry("신한카드",       1760133),
         new CidEntry("신한카드(마스터)",1917257),
@@ -51,12 +52,12 @@ public class ConvertController {
         new CidEntry("에어서울",       1800120)
     );
 
-    // 제휴 바로가기 링크 (현대카드 추가)
+    // 제휴 바로가기 링크
     private static final List<AffiliateLink> AFFILIATES = List.of(
         new AffiliateLink("국민카드",       "https://www.agoda.com/ko-kr/kbcard"),
         new AffiliateLink("우리카드",       "https://www.agoda.com/ko-kr/wooricard"),
         new AffiliateLink("우리카드(마스터)","https://www.agoda.com/ko-kr/wooricardmaster"),
-        new AffiliateLink("현대카드",       "https://www.agoda.com/ko-kr/hyundaicard"),  // 신규 링크
+        new AffiliateLink("현대카드",       "https://www.agoda.com/ko-kr/hyundaicard"),
         new AffiliateLink("BC카드",         "https://www.agoda.com/ko-kr/bccard"),
         new AffiliateLink("신한카드",       "https://www.agoda.com/ko-kr/shinhancard"),
         new AffiliateLink("신한카드(마스터)","https://www.agoda.com/ko-kr/shinhanmaster"),
@@ -77,16 +78,19 @@ public class ConvertController {
             .build();
     private final Pattern apiUrlPattern = Pattern.compile("apiUrl\\s*=\\s*\"(.+?)\"");
 
-    /**
-     * POST /api/convert
-     * Request Body: { "url": "아고다 호텔 상세페이지 URL" }
-     * Response: ConvertResponse
-     */
     @PostMapping(value = "/convert", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ConvertResponse convert(@RequestBody Map<String, String> body) throws Exception {
+    public ResponseEntity<?> convert(@RequestBody Map<String, String> body) {
         String url = body.get("url");
-        if (!isValidAgodaUrl(url)) {
-            throw new IllegalArgumentException("유효하지 않은 아고다 URL입니다.");
+        
+        // 유효성 검사 (파이썬 스타일)
+        if (url == null || url.trim().isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "주소를 입력해주세요."));
+        } else if (!url.contains("agoda.com")) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "아고다 주소가 아닌 것 같아요."));
+        } else if (url.contains("agoda.com/ko-kr/search")) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "검색 페이지 URL은 사용할 수 없어요."));
+        } else if (!url.contains("cid=")) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "주소에서 cid 값을 찾을 수 없어요. \n올바른 주소인지 확인해주세요."));
         }
 
         List<CidEntry> cidList = buildCidList();
@@ -96,56 +100,136 @@ public class ConvertController {
         for (CidEntry entry : cidList) {
             String modUrl = url.replaceAll("cid=-?\\d+", "cid=" + entry.cid);
 
-            Document doc = Jsoup.connect(modUrl)
-                                .header("Accept-Language", "ko-KR")
-                                .timeout(10_000)
-                                .get();
-            Element scriptTag = doc.selectFirst("script[data-selenium=script-initparam]");
-            if (scriptTag == null) continue;
+            try {
+                // 호텔 정보 및 가격 추출
+                PriceInfo priceInfo = extractPriceInfo(modUrl);
+                
+                if (hotelName == null) {
+                    hotelName = priceInfo.hotelName;
+                }
 
-            Matcher m = apiUrlPattern.matcher(scriptTag.html());
-            if (!m.find()) continue;
+                // 가격이 있거나 매진 상태인 경우 결과에 추가
+                if (priceInfo.price > 0 || priceInfo.isSoldOut) {
+                    results.add(new LinkInfo(
+                        entry.label, 
+                        entry.cid, 
+                        modUrl, 
+                        priceInfo.price,
+                        priceInfo.isSoldOut
+                    ));
+                }
 
-            String apiPath = m.group(1).replace("&amp;", "&");
-            HttpRequest apiReq = HttpRequest.newBuilder()
-                    .uri(URI.create("https://www.agoda.com" + apiPath))
-                    .header("Accept-Language", "ko-KR")
-                    .timeout(Duration.ofSeconds(8))
-                    .GET()
-                    .build();
-            HttpResponse<String> apiResp = http.send(apiReq, HttpResponse.BodyHandlers.ofString());
-            JsonNode root = mapper.readTree(apiResp.body());
+                Thread.sleep(200);
+            } catch (Exception e) {
+                if (hotelName == null) {
+                    hotelName = "호텔 이름을 찾는 중 오류 발생: " + e.getMessage();
+                }
+            }
+        }
 
-            JsonNode roomsNode = root.path("rooms");
-            if (!roomsNode.isArray() || roomsNode.size() == 0) continue;
+        // 매진이 아닌 것들 중에서 최저가 계산
+        List<LinkInfo> availableRooms = results.stream()
+                .filter(r -> !r.isSoldOut && r.price > 0)
+                .sorted(Comparator.comparingDouble(li -> li.price))
+                .toList();
+        
+        LinkInfo cheapest = availableRooms.isEmpty() ? null : availableRooms.get(0);
 
-            JsonNode firstRoom = roomsNode.get(0);
-            JsonNode priceNode = firstRoom.path("directPrice").path("originalPrice");
-            if (!priceNode.isNumber()) continue;
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "hotel", hotelName != null ? hotelName : "호텔 정보 없음",
+            "priced", results,
+            "cheapest", cheapest,
+            "affiliateLinks", AFFILIATES
+        ));
+    }
 
-            double price = priceNode.asDouble();
-            if (hotelName == null) {
+    private PriceInfo extractPriceInfo(String url) throws Exception {
+        Document doc = Jsoup.connect(url)
+                .header("Accept-Language", "ko-KR")
+                .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .timeout(10000)
+                .get();
+
+        String hotelName = "호텔명 없음";
+        double price = 0;
+        boolean isSoldOut = false;
+
+        // 1. 매진 메시지 체크
+        Element soldOutElement = doc.selectFirst(".RoomGrid-searchTimeOutText");
+        if (soldOutElement != null && soldOutElement.text().contains("고객님이 선택한 날짜에 이 숙소의 본 사이트 잔여 객실이 없습니다")) {
+            isSoldOut = true;
+        }
+
+        // 2. API 호출 방식으로 호텔명과 가격 추출
+        Element scriptTag = doc.selectFirst("script[data-selenium=script-initparam]");
+        if (scriptTag != null) {
+            String scriptContent = scriptTag.data().isEmpty() ? scriptTag.text() : scriptTag.data();
+            Matcher m = apiUrlPattern.matcher(scriptContent);
+            if (m.find()) {
+                String apiPath = m.group(1).replace("&amp;", "&");
+                HttpRequest apiReq = HttpRequest.newBuilder()
+                        .uri(URI.create("https://www.agoda.com" + apiPath))
+                        .header("Accept-Language", "ko-KR")
+                        .timeout(Duration.ofSeconds(8))
+                        .GET()
+                        .build();
+                HttpResponse<String> apiResp = http.send(apiReq, HttpResponse.BodyHandlers.ofString());
+                JsonNode root = mapper.readTree(apiResp.body());
+
+                // 호텔명 추출
                 JsonNode nameNode = root.path("hotelInfo").path("name");
                 if (nameNode.isTextual()) {
                     hotelName = nameNode.asText();
                 }
-            }
 
-            results.add(new LinkInfo(entry.label, entry.cid, modUrl, price));
-            Thread.sleep(200);
+                // 가격 추출 (매진이 아닌 경우에만)
+                if (!isSoldOut) {
+                    JsonNode roomsNode = root.path("rooms");
+                    if (roomsNode.isArray() && roomsNode.size() > 0) {
+                        JsonNode firstRoom = roomsNode.get(0);
+                        JsonNode priceNode = firstRoom.path("directPrice").path("originalPrice");
+                        if (priceNode.isNumber()) {
+                            price = priceNode.asDouble();
+                        }
+                    }
+                    
+                    // soldOutRooms에서 참고 가격 추출
+                    if (price == 0) {
+                        JsonNode soldOutRooms = root.path("soldOutRooms");
+                        if (soldOutRooms.isArray() && soldOutRooms.size() > 0) {
+                            for (JsonNode soldOutRoom : soldOutRooms) {
+                                JsonNode exclusivePrice = soldOutRoom.path("exclusivePrice");
+                                JsonNode allInclusivePrice = soldOutRoom.path("allInclusivePrice");
+                                
+                                if (exclusivePrice.isNumber() && exclusivePrice.asDouble() > 0) {
+                                    price = exclusivePrice.asDouble();
+                                    break;
+                                } else if (allInclusivePrice.isNumber() && allInclusivePrice.asDouble() > 0) {
+                                    price = allInclusivePrice.asDouble();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        results.sort(Comparator.comparingDouble(li -> li.price));
-        LinkInfo cheapest = results.isEmpty() ? null : results.get(0);
+        // 3. 호텔명이 아직 없으면 HTML에서 추출
+        if ("호텔명 없음".equals(hotelName)) {
+            Element h1 = doc.selectFirst("h1");
+            if (h1 != null && !h1.text().isEmpty()) {
+                hotelName = h1.text();
+            } else {
+                Element title = doc.selectFirst("title");
+                if (title != null && !title.text().isEmpty()) {
+                    hotelName = title.text().split("\\|")[0].trim();
+                }
+            }
+        }
 
-        return new ConvertResponse(hotelName, results, cheapest, AFFILIATES);
-    }
-
-    private boolean isValidAgodaUrl(String url) {
-        return url != null
-            && url.contains("agoda.com")
-            && url.contains("cid=")
-            && !url.contains("/search");
+        return new PriceInfo(hotelName, price, isSoldOut);
     }
 
     private List<CidEntry> buildCidList() {
@@ -159,14 +243,20 @@ public class ConvertController {
         return list;
     }
 
-    // DTO & Record 선언
+    // DTO 클래스들
     public static record CidEntry(String label, int cid) {}
-    public static record LinkInfo(String label, int cid, String url, double price) {}
+    public static record LinkInfo(String label, int cid, String url, double price, boolean isSoldOut) {}
     public static record AffiliateLink(String label, String url) {}
-    public static record ConvertResponse(
-        String hotel,
-        List<LinkInfo> priced,
-        LinkInfo cheapest,
-        List<AffiliateLink> affiliateLinks
-    ) {}
+    
+    private static class PriceInfo {
+        final String hotelName;
+        final double price;
+        final boolean isSoldOut;
+        
+        PriceInfo(String hotelName, double price, boolean isSoldOut) {
+            this.hotelName = hotelName;
+            this.price = price;
+            this.isSoldOut = isSoldOut;
+        }
+    }
 }
