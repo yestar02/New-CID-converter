@@ -20,6 +20,7 @@ import java.util.stream.Collectors;
 @RequestMapping("/api")
 public class ConvertController {
 
+    // 고정 CID 목록
     private static final List<CidEntry> STATIC_CIDS = List.of(
         new CidEntry("구글 지도 1",    1833982),
         new CidEntry("구글 지도 2",    1917614),
@@ -49,6 +50,7 @@ public class ConvertController {
         new CidEntry("에어서울",       1800120)
     );
 
+    // 제휴 링크
     private static final List<AffiliateLink> AFFILIATES = List.of(
         new AffiliateLink("국민카드","https://www.agoda.com/ko-kr/kbcard"),
         new AffiliateLink("우리카드","https://www.agoda.com/ko-kr/wooricard"),
@@ -89,26 +91,29 @@ public class ConvertController {
 
         List<CidEntry> cidList = buildCidList();
         List<LinkInfo> results = Collections.synchronizedList(new ArrayList<>());
-        CompletableFuture<Void>[] futures = cidList.stream().map(entry ->
-            CompletableFuture.runAsync(() -> fetchWithRetry(url, entry, results), scheduler)
-        ).toArray(CompletableFuture[]::new);
 
-        // 모든 작업 완료 대기 (최대 15초)
-        CompletableFuture.allOf(futures).completeOnTimeout(null, 15, TimeUnit.SECONDS).join();
+        // 비동기 병렬 호출 + 재시도 로직
+        CompletableFuture<?>[] futures = cidList.stream()
+            .map(entry -> CompletableFuture.runAsync(() -> fetchWithRetry(url, entry, results), scheduler))
+            .toArray(CompletableFuture[]::new);
+        CompletableFuture.allOf(futures)
+            .completeOnTimeout(null, 15, TimeUnit.SECONDS)
+            .join();
 
         // 호텔명 취합
         String hotelName = results.stream()
             .map(LinkInfo::getHotel)
             .filter(Objects::nonNull)
-            .findFirst().orElse("호텔명 없음");
+            .findFirst()
+            .orElse("호텔명 없음");
 
-        // 최저가 선정
+        // 최저가 계산
         LinkInfo cheapest = results.stream()
             .filter(r -> !r.isSoldOut() && r.getPrice() > 0)
             .min(Comparator.comparingDouble(LinkInfo::getPrice))
             .orElse(null);
 
-        Map<String, Object> resp = new HashMap<>();
+        Map<String,Object> resp = new HashMap<>();
         resp.put("success", true);
         resp.put("hotel", hotelName);
         resp.put("priced", results);
@@ -118,9 +123,9 @@ public class ConvertController {
     }
 
     private void fetchWithRetry(String baseUrl, CidEntry entry, List<LinkInfo> results) {
-        String modUrl = baseUrl.replaceAll("cid=-?\\d+", "cid=" + entry.getCid());
-        int maxRetries = 3;
-        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+        String modUrl = baseUrl.replaceAll("cid=-?\\d+", "cid=" + entry.cid());
+        int retries = 3;
+        for (int i = 1; i <= retries; i++) {
             try {
                 JsonNode root = fetchSecondaryDataJson(modUrl);
                 String hotel = root.path("hotelInfo").path("name").asText(null);
@@ -130,13 +135,13 @@ public class ConvertController {
                 double price = txt.isBlank() ? 0 : Double.parseDouble(txt);
                 boolean soldOut = price == 0;
 
-                results.add(new LinkInfo(entry.getLabel(), entry.getCid(), modUrl, price, soldOut, hotel));
+                results.add(new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel));
                 return;
             } catch (Exception e) {
-                if (attempt == maxRetries) {
-                    results.add(new LinkInfo(entry.getLabel(), entry.getCid(), modUrl, 0, true, null));
+                if (i == retries) {
+                    results.add(new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null));
                 } else {
-                    try { Thread.sleep(500L * attempt); } catch (InterruptedException ignored) {}
+                    try { Thread.sleep(500L * i); } catch (InterruptedException ignored) {}
                 }
             }
         }
@@ -144,7 +149,7 @@ public class ConvertController {
 
     private JsonNode fetchSecondaryDataJson(String hotelPageUrl) throws Exception {
         Document doc = Jsoup.connect(hotelPageUrl)
-            .header("Accept-Language", "ko-KR")
+            .header("Accept-Language","ko-KR")
             .timeout((int) Duration.ofSeconds(10).toMillis())
             .get();
         Element script = doc.selectFirst("script[data-selenium=script-initparam]");
@@ -160,14 +165,12 @@ public class ConvertController {
             .uri(URI.create(apiUrl))
             .header("Accept-Language","ko-KR")
             .timeout(Duration.ofSeconds(8))
-            .GET()
-            .build();
+            .GET().build();
         HttpResponse<String> res = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
         return mapper.readTree(res.body());
     }
 
     private List<CidEntry> buildCidList() {
-        // 무작위 10개 CID + STATIC_CIDS
         Set<Integer> rnd = new LinkedHashSet<>();
         Random r = new Random();
         while (rnd.size() < 10) {
@@ -178,6 +181,7 @@ public class ConvertController {
         return list;
     }
 
+    // DTO 및 Record
     public static record CidEntry(String label, int cid) {}
     public static class LinkInfo {
         private final String label;
@@ -186,10 +190,16 @@ public class ConvertController {
         private final double price;
         private final boolean isSoldOut;
         private final String hotel;
+
         public LinkInfo(String label, int cid, String url, double price, boolean isSoldOut, String hotel) {
-            this.label = label; this.cid = cid; this.url = url;
-            this.price = price; this.isSoldOut = isSoldOut; this.hotel = hotel;
+            this.label = label;
+            this.cid = cid;
+            this.url = url;
+            this.price = price;
+            this.isSoldOut = isSoldOut;
+            this.hotel = hotel;
         }
+
         public String getLabel() { return label; }
         public int getCid() { return cid; }
         public String getUrl() { return url; }
