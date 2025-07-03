@@ -209,4 +209,95 @@ public class ConvertController {
                              .path("cheapestPriceWithCurrency")
                              .asText("");
             if (!txt.isEmpty()) {
-                String num =
+                String num = txt.replaceAll("[^0-9.]", "");
+                if (!num.isEmpty()) {
+                    try { p = Double.parseDouble(num); } catch (NumberFormatException ignored) {}
+                }
+            }
+        }
+        return p;
+    }
+
+    private String extractCurrencyFromUrl(String url) {
+        if (url.contains("currencyCode=")) {
+            return url.split("currencyCode=")[1].split("&")[0].toUpperCase();
+        }
+        if (url.contains("currency=")) {
+            return url.split("currency=")[1].split("&")[0].toUpperCase();
+        }
+        return "KRW";
+    }
+
+    private String addCurrencyToPageUrl(String url, String currency) {
+        if (!url.contains("currencyCode=" + currency)) {
+            url += url.contains("?") ? "&currencyCode=" : "?currencyCode=";
+            url += currency;
+        }
+        if (url.contains("agoda.com/")) {
+            url = url.replace("agoda.com/", "agoda.com/ko-kr/")
+                     .replace("/ko-kr/ko-kr/", "/ko-kr/");
+        }
+        return url;
+    }
+
+    private String addCurrencyParameter(String apiUrl, String currency) {
+        if (!apiUrl.contains("currencyCode=" + currency)) {
+            apiUrl += apiUrl.contains("?") ? "&currencyCode=" : "?currencyCode=";
+            apiUrl += currency;
+        }
+        return apiUrl;
+    }
+
+    private String buildKoreanCookies() {
+        return String.join("; ",
+            "selectedLanguage=ko-kr", "selectedCurrency=KRW", "country=KR", "locale=ko-KR",
+            "language=ko-kr", "currency=KRW", "countrysite=KR",
+            "userPreferredLanguage=ko-kr", "userPreferredCurrency=KRW",
+            "AG_CURRENCY=KRW", "AG_LANGUAGE=ko-kr", "AG_COUNTRY=KR",
+            "cookieConsent=1", "geolocation=KR", "timezone=Asia%2FSeoul", "deviceType=desktop"
+        );
+    }
+
+    private List<CidEntry> buildCidList() {
+        Random rnd = new Random();
+        Set<Integer> randomFive = new LinkedHashSet<>();
+        while (randomFive.size() < 5) {
+            randomFive.add(rnd.nextInt(2000000 - 1800000 + 1) + 1800000);
+        }
+        List<CidEntry> list = new ArrayList<>(STATIC_CIDS);
+        randomFive.forEach(cid -> list.add(new CidEntry("AUTO-" + cid, cid)));
+        return list;
+    }
+
+    public static record CidEntry(String label, int cid) {}
+    public static record AffiliateLink(String label, String url) {}
+
+    public static class LinkInfo {
+        private final String label;
+        private final int cid;
+        private final String url;
+        private final double price;
+        private final boolean soldOut;
+        private final String hotel;
+        private final String currency;
+
+        public LinkInfo(String label, int cid, String url,
+                        double price, boolean soldOut, String hotel, String currency) {
+            this.label = label;
+            this.cid = cid;
+            this.url = url;
+            this.price = price;
+            this.soldOut = soldOut;
+            this.hotel = hotel;
+            this.currency = currency;
+        }
+
+        public String getLabel()    { return label; }
+        public int getCid()         { return cid; }
+        public String getUrl()      { return url; }
+        public double getPrice()    { return price; }
+        public boolean isSoldOut()  { return soldOut; }
+        public String getHotel()    { return hotel; }
+        public String getCurrency() { return currency; }
+    }
+}
