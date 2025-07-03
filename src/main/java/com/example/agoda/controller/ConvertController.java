@@ -267,4 +267,3 @@ public class ConvertController {
         public String getHotel() { return hotel; }
     }
 }
-

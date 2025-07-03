@@ -31,12 +31,15 @@ $('#frm').addEventListener('submit', async e => {
       return;
     }
 
-    // 호텔 이름과 API 응답의 cheapestPrice를 사용해 타이틀 설정
+    // 호텔 이름과 원본 URL에서 가져온 초기 가격 사용
     const hotelName = res.hotel;
-    const cheapestPrice = res.cheapest && res.cheapest.price > 0
-      ? res.cheapest.price.toLocaleString() + '원'
+    const initialPriceValue = res.initialPrice;
+
+    // 결과창 타이틀 수정: (호텔이름) – (원본 URL 가격)원
+    const priceText = initialPriceValue > 0
+      ? initialPriceValue.toLocaleString() + '원'
       : '가격 정보 없음';
-    $('#hotelTitle').textContent = `${hotelName} – ${cheapestPrice}`;
+    $('#hotelTitle').textContent = `${hotelName} – ${priceText}`;
     $('#hotelTitle').style.display = 'block';
 
     res.priced.forEach(item => {
