@@ -121,23 +121,29 @@ public class ConvertController {
 
     private LinkInfo fetchSequentially(String baseUrl, CidEntry entry) {
         String modUrl = baseUrl.replaceAll("cid=-?\\d+", "cid=" + entry.cid());
-
         int maxAttempts = 3;
+        long retryIntervalMillis = 1000L;
+
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
                 JsonNode root = fetchSecondaryDataJson(modUrl);
 
-                String hotel = root.path("hotelInfo").path("name").asText(null);
                 double price = root.path("mosaicInitData")
                                    .path("discount")
                                    .path("cheapestPrice")
-                                   .asDouble(0);
+                                   .asDouble(-1);
                 String currency = root.path("mosaicInitData")
                                       .path("discount")
                                       .path("currency")
                                       .asText("UNKNOWN");
+                String hotel = root.path("hotelInfo").path("name").asText("호텔명 없음");
 
-                boolean soldOut = price == 0;
+                if (price < 0 && attempt < maxAttempts) {
+                    Thread.sleep(retryIntervalMillis * attempt);
+                    continue;
+                }
+
+                boolean soldOut = (price == 0);
                 String symbol = "USD".equals(currency) ? "$"
                               : "KRW".equals(currency) ? "₩"
                               : currency + " ";
@@ -159,18 +165,19 @@ public class ConvertController {
 
             } catch (Exception e) {
                 if (attempt == maxAttempts) {
-                    System.out.printf("✗ %s (CID: %d) - 실패: %s%n",
+                    System.out.printf("✗ %s (CID: %d) - 최종 실패: %s%n",
                         entry.label(), entry.cid(), e.getMessage());
                     return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
                 }
-                try { Thread.sleep(1000L * attempt); }
+                try { Thread.sleep(retryIntervalMillis * attempt); }
                 catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
             }
         }
+
         return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
     }
 
-    // 필수 헤더만 반영한 간소화된 fetchSecondaryDataJson
+    // 최소화된 헤더로 language·currency 유지
     private JsonNode fetchSecondaryDataJson(String hotelPageUrl) throws Exception {
         Document doc = Jsoup.connect(hotelPageUrl)
             .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
