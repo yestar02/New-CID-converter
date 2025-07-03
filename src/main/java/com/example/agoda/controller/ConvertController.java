@@ -90,7 +90,6 @@ public class ConvertController {
         List<LinkInfo> results = new ArrayList<>();
 
         System.out.println("총 " + cidList.size() + "개 CID로 순차적 가격 수집 시작...");
-
         for (int i = 0; i < cidList.size(); i++) {
             CidEntry entry = cidList.get(i);
             System.out.printf("(%d/%d) %s 처리 중...%n", i + 1, cidList.size(), entry.label());
@@ -122,33 +121,28 @@ public class ConvertController {
     }
 
     private LinkInfo fetchSequentially(String baseUrl, CidEntry entry) {
+        // CID만 교체, 나머지 파라미터 그대로 유지
         String modUrl = baseUrl.replaceAll("cid=-?\\d+", "cid=" + entry.cid());
-        String currency = extractCurrencyFromUrl(baseUrl);
 
         int maxAttempts = 3;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
-                JsonNode root = fetchSecondaryDataJson(modUrl, currency);
-
+                JsonNode root = fetchSecondaryDataJson(modUrl);
                 String hotel = root.path("hotelInfo").path("name").asText(null);
                 double price = root.path("mosaicInitData")
                                    .path("discount")
                                    .path("cheapestPrice")
                                    .asDouble(0);
-
                 boolean soldOut = price == 0;
                 System.out.printf(
                     soldOut
                         ? "✗ %s (CID: %d) - 품절%n"
-                        : "✓ %s (CID: %d) - 가격: %.2f %s%n",
-                    entry.label(), entry.cid(), price, currency
+                        : "✓ %s (CID: %d) - 가격: %.2f%n",
+                    entry.label(), entry.cid(), price
                 );
-
                 return new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel);
-
             } catch (Exception e) {
                 if (attempt == maxAttempts) {
-                    System.out.printf("✗ %s (CID: %d) - 실패: %s%n", entry.label(), entry.cid(), e.getMessage());
                     return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
                 }
                 try { Thread.sleep(1000L * attempt); }
@@ -158,43 +152,38 @@ public class ConvertController {
         return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
     }
 
-    private JsonNode fetchSecondaryDataJson(String hotelPageUrl, String currency) throws Exception {
-        // HTML 파싱 시 UTF-8 처리 + Python requests와 동일한 언어 헤더 추가
+    private JsonNode fetchSecondaryDataJson(String hotelPageUrl) throws Exception {
+        // 페이지 URL은 이미 currencyCode 파라미터를 포함하므로 그대로 사용
         Document doc = Jsoup.connect(hotelPageUrl)
             .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
-            .header("ag-language-locale", "ko-kr")       // ← Python과 동일하게 추가
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .header("ag-language-locale", "ko-kr")
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
             .timeout((int) Duration.ofSeconds(15).toMillis())
             .get();
 
         Element script = doc.selectFirst("script[data-selenium=script-initparam]");
-        String content = script != null
-            ? (script.data().isEmpty() ? script.text() : script.data())
-            : "";
-        String apiPath = content.split("apiUrl\\s*=\\s*\"")[1]
-                                .split("\"")[0]
-                                .replace("&amp;", "&");
-        String apiUrl = "https://www.agoda.com" + apiPath;
+        String initJson = script != null
+                        ? (script.data().isEmpty() ? script.text() : script.data())
+                        : "";
+        String apiPath = initJson.split("apiUrl\\s*=\\s*\"")[1]
+                                 .split("\"")[0]
+                                 .replace("&amp;", "&");
 
-        HttpRequest request = HttpRequest.newBuilder()
+        String apiUrl = "https://www.agoda.com" + apiPath;
+        // API URL 역시 currencyCode=KRW 파라미터를 initJson에 포함된 상태로 전달
+
+        HttpRequest req = HttpRequest.newBuilder()
             .uri(URI.create(apiUrl))
             .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
-            .header("ag-language-locale", "ko-kr")       // ← Python과 동일하게 추가
+            .header("ag-language-locale", "ko-kr")
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
             .header("Referer", hotelPageUrl)
             .timeout(Duration.ofSeconds(20))
             .GET()
             .build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        return mapper.readTree(response.body());
-    }
-
-    private String extractCurrencyFromUrl(String url) {
-        if (url.contains("currency=")) {
-            return url.split("currency=")[1].split("&")[0].toUpperCase();
-        }
-        return "KRW";
+        HttpResponse<String> res = httpClient.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        return mapper.readTree(res.body());
     }
 
     private List<CidEntry> buildCidList() {
@@ -209,6 +198,7 @@ public class ConvertController {
     }
 
     public static record CidEntry(String label, int cid) {}
+    public static record AffiliateLink(String label, String url) {}
 
     public static class LinkInfo {
         private final String label;
@@ -227,13 +217,11 @@ public class ConvertController {
             this.hotel = hotel;
         }
 
-        public String getLabel() { return label; }
-        public int getCid() { return cid; }
-        public String getUrl() { return url; }
-        public double getPrice() { return price; }
-        public boolean isSoldOut() { return soldOut; }
-        public String getHotel() { return hotel; }
+        public String getLabel()    { return label; }
+        public int    getCid()      { return cid; }
+        public String getUrl()      { return url; }
+        public double getPrice()    { return price; }
+        public boolean isSoldOut()  { return soldOut; }
+        public String getHotel()    { return hotel; }
     }
-
-    public static record AffiliateLink(String label, String url) {}
 }
