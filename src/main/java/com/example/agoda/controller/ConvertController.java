@@ -75,16 +75,34 @@ public class ConvertController {
         .build();
 
     @PostMapping(value = "/convert", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<?> convert(@RequestBody Map<String, String> body) {
+    public ResponseEntity<?> convert(@RequestBody Map<String, String> body) throws Exception {
         String url = body.get("url");
         if (url == null || url.isBlank()) {
             return ResponseEntity.badRequest()
-                                 .body(Map.of("success", false, "message", "주소를 입력해주세요."));
+                .body(Map.of("success", false, "message", "주소를 입력해주세요."));
         }
         if (!url.contains("agoda.com") || !url.contains("cid=")) {
             return ResponseEntity.badRequest()
-                                 .body(Map.of("success", false, "message", "유효한 아고다 상세 URL을 입력해주세요."));
+                .body(Map.of("success", false, "message", "유효한 아고다 상세 URL을 입력해주세요."));
         }
+
+        // 초기 호텔명·가격 multiple attempt 복구
+        int maxAttempts = 3;
+        long retryInterval = 1000L;
+        JsonNode initRoot = null;
+        String initialHotel = "호텔명 없음";
+        double initialPrice = 0;
+        for (int i = 1; i <= maxAttempts; i++) {
+            initRoot = fetchSecondaryDataJson(url);
+            initialHotel = initRoot.path("hotelInfo").path("name").asText(initialHotel);
+            initialPrice = initRoot.path("mosaicInitData")
+                                   .path("discount")
+                                   .path("cheapestPrice")
+                                   .asDouble(-1);
+            if (initialPrice > 0) break;
+            if (i < maxAttempts) Thread.sleep(retryInterval * i);
+        }
+        if (initialPrice < 0) initialPrice = 0;
 
         List<CidEntry> cidList = buildCidList();
         List<LinkInfo> results = new ArrayList<>();
@@ -98,20 +116,16 @@ public class ConvertController {
         }
         System.out.println("모든 CID 가격 수집 완료!");
 
-        String hotelName = results.stream()
-                                  .map(LinkInfo::getHotel)
-                                  .filter(Objects::nonNull)
-                                  .findFirst()
-                                  .orElse("호텔명 없음");
-
         LinkInfo cheapest = results.stream()
-                                   .filter(r -> !r.isSoldOut() && r.getPrice() > 0)
-                                   .min(Comparator.comparingDouble(LinkInfo::getPrice))
-                                   .orElse(null);
+            .filter(r -> !r.isSoldOut() && r.getPrice() > 0)
+            .min(Comparator.comparingDouble(LinkInfo::getPrice))
+            .orElse(null);
 
+        // 응답에 초기 호텔·가격 포함
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("success", true);
-        resp.put("hotel", hotelName);
+        resp.put("hotel", initialHotel);
+        resp.put("initialPrice", initialPrice);
         resp.put("priced", results);
         resp.put("cheapest", cheapest);
         resp.put("affiliateLinks", AFFILIATES);
@@ -121,73 +135,66 @@ public class ConvertController {
         return ResponseEntity.ok(resp);
     }
 
-    private LinkInfo fetchSequentially(String baseUrl, CidEntry entry) {
+    private LinkInfo fetchSequentially(String baseUrl, CidEntry entry) throws Exception {
         String modUrl = baseUrl.replaceAll("cid=-?\\d+", "cid=" + entry.cid());
-        String currency = extractCurrencyFromUrl(baseUrl);
-
         int maxAttempts = 3;
-        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-            try {
-                JsonNode root = fetchSecondaryDataJson(modUrl, currency);
+        long retryInterval = 1000L;
+        JsonNode root;
+        double price = 0;
+        String currency = "UNKNOWN";
+        String hotel = null;
 
-                String hotel = root.path("hotelInfo").path("name").asText(null);
-                double price = root.path("mosaicInitData")
-                                   .path("discount")
-                                   .path("cheapestPrice")
-                                   .asDouble(0);
-
-                boolean soldOut = price == 0;
-                System.out.printf(
-                    soldOut
-                        ? "✗ %s (CID: %d) - 품절%n"
-                        : "✓ %s (CID: %d) - 가격: %.2f %s%n",
-                    entry.label(), entry.cid(), price, currency
-                );
-
-                return new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel);
-
-            } catch (Exception e) {
-                if (attempt == maxAttempts) {
-                    System.out.printf("✗ %s (CID: %d) - 실패: %s%n", entry.label(), entry.cid(), e.getMessage());
-                    return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
-                }
-                try { Thread.sleep(1000L * attempt); }
-                catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
-            }
+        for (int i = 1; i <= maxAttempts; i++) {
+            root = fetchSecondaryDataJson(modUrl);
+            hotel = root.path("hotelInfo").path("name").asText(null);
+            price = root.path("mosaicInitData").path("discount").path("cheapestPrice").asDouble(0);
+            currency = root.path("mosaicInitData").path("discount").path("currency").asText("UNKNOWN");
+            if (price > 0) break;
+            if (i < maxAttempts) Thread.sleep(retryInterval * i);
         }
-        return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
+
+        boolean soldOut = price == 0;
+        System.out.printf(
+            soldOut
+                ? "✗ %s (CID: %d) - 품절 (currency: %s)%n"
+                : "✓ %s (CID: %d) - 가격: %.2f %s%n",
+            entry.label(), entry.cid(), price, currency
+        );
+
+        return new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel);
     }
 
-    private JsonNode fetchSecondaryDataJson(String hotelPageUrl, String currency) throws Exception {
-        // HTML 파싱 시 UTF-8 처리 + Python requests와 동일한 언어 헤더 추가
+    private JsonNode fetchSecondaryDataJson(String hotelPageUrl) throws Exception {
         Document doc = Jsoup.connect(hotelPageUrl)
             .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
-            .header("ag-language-locale", "ko-kr")       // ← Python과 동일하게 추가
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .header("ag-language-locale", "ko-kr")
+            .header("User-Agent", "Mozilla/5.0")
             .timeout((int) Duration.ofSeconds(15).toMillis())
             .get();
 
         Element script = doc.selectFirst("script[data-selenium=script-initparam]");
-        String content = script != null
+        String initJson = script != null
             ? (script.data().isEmpty() ? script.text() : script.data())
             : "";
-        String apiPath = content.split("apiUrl\\s*=\\s*\"")[1]
-                                .split("\"")[0]
-                                .replace("&amp;", "&");
+        String apiPath = initJson.split("apiUrl\\s*=\\s*\"")[1]
+                                 .split("\"")[0]
+                                 .replace("&amp;", "&");
         String apiUrl = "https://www.agoda.com" + apiPath;
 
-        HttpRequest request = HttpRequest.newBuilder()
+        System.out.println("API Request URL: " + apiUrl);
+
+        HttpRequest req = HttpRequest.newBuilder()
             .uri(URI.create(apiUrl))
             .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
-            .header("ag-language-locale", "ko-kr")       // ← Python과 동일하게 추가
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            .header("ag-language-locale", "ko-kr")
+            .header("User-Agent", "Mozilla/5.0")
             .header("Referer", hotelPageUrl)
             .timeout(Duration.ofSeconds(20))
             .GET()
             .build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        return mapper.readTree(response.body());
+        HttpResponse<String> res = httpClient.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        return mapper.readTree(res.body());
     }
 
     private String extractCurrencyFromUrl(String url) {
@@ -209,6 +216,7 @@ public class ConvertController {
     }
 
     public static record CidEntry(String label, int cid) {}
+    public static record AffiliateLink(String label, String url) {}
 
     public static class LinkInfo {
         private final String label;
@@ -227,13 +235,11 @@ public class ConvertController {
             this.hotel = hotel;
         }
 
-        public String getLabel() { return label; }
-        public int getCid() { return cid; }
-        public String getUrl() { return url; }
-        public double getPrice() { return price; }
-        public boolean isSoldOut() { return soldOut; }
-        public String getHotel() { return hotel; }
+        public String getLabel()    { return label; }
+        public int    getCid()      { return cid; }
+        public String getUrl()      { return url; }
+        public double getPrice()    { return price; }
+        public boolean isSoldOut()  { return soldOut; }
+        public String getHotel()    { return hotel; }
     }
-
-    public static record AffiliateLink(String label, String url) {}
 }

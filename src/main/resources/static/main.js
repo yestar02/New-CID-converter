@@ -31,7 +31,12 @@ $('#frm').addEventListener('submit', async e => {
       return;
     }
 
-    $('#hotelTitle').textContent = `${res.hotel} – 가격 비교`;
+    // 호텔 이름과 API 응답의 cheapestPrice를 사용해 타이틀 설정
+    const hotelName = res.hotel;
+    const cheapestPrice = res.cheapest && res.cheapest.price > 0
+      ? res.cheapest.price.toLocaleString() + '원'
+      : '가격 정보 없음';
+    $('#hotelTitle').textContent = `${hotelName} – ${cheapestPrice}`;
     $('#hotelTitle').style.display = 'block';
 
     res.priced.forEach(item => {
