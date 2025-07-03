@@ -244,12 +244,17 @@ public class ConvertController {
         // **수정: 페이지 URL에 currency 파라미터 추가**
         String pageUrl = addCurrencyToPageUrl(hotelPageUrl, currency);
         
-        // HTML 파싱 시 UTF-8 처리
+        // **핵심 수정: 한국어 쿠키 추가**
+        String koreanCookies = buildKoreanCookies();
+        
+        // HTML 파싱 시 UTF-8 처리 + 쿠키 설정
         Document doc = Jsoup.connect(pageUrl)
             .header("Accept-Language","ko-KR,ko;q=0.9,en;q=0.8")
             .header("User-Agent","Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .header("Cookie", koreanCookies)
             .timeout((int)Duration.ofSeconds(15).toMillis())
             .get();
+            
         Element script = doc.selectFirst("script[data-selenium=script-initparam]");
         String content = script != null
             ? (script.data().isEmpty() ? script.text() : script.data())
@@ -266,6 +271,7 @@ public class ConvertController {
             .uri(URI.create(apiUrl))
             .header("Accept-Language","ko-KR,ko;q=0.9,en;q=0.8")
             .header("User-Agent","Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            .header("Cookie", koreanCookies)  // **API 호출에도 쿠키 추가**
             .header("Referer", pageUrl)
             .timeout(Duration.ofSeconds(20))
             .GET()
@@ -274,7 +280,37 @@ public class ConvertController {
         return mapper.readTree(response.body());
     }
 
+    private String buildKoreanCookies() {
+        // 실제 Agoda 사이트에서 사용하는 쿠키 패턴
+        List<String> cookies = Arrays.asList(
+            "selectedLanguage=ko-kr",
+            "selectedCurrency=KRW",
+            "country=KR",
+            "locale=ko-KR", 
+            "language=ko-kr",
+            "currency=KRW",
+            "countrysite=KR",
+            "userPreferredLanguage=ko-kr",
+            "userPreferredCurrency=KRW",
+            "AG_CURRENCY=KRW",
+            "AG_LANGUAGE=ko-kr",
+            "AG_COUNTRY=KR",
+            "cookieConsent=1",
+            "geolocation=KR",
+            "timezone=Asia%2FSeoul",
+            "deviceType=desktop"
+        );
+        return String.join("; ", cookies);
+    }
+
     private String addCurrencyToPageUrl(String pageUrl, String currency) {
+        // **한국어 경로로 강제 변환**
+        if (pageUrl.contains("agoda.com/")) {
+            pageUrl = pageUrl.replace("agoda.com/", "agoda.com/ko-kr/");
+            // 중복 방지
+            pageUrl = pageUrl.replace("/ko-kr/ko-kr/", "/ko-kr/");
+        }
+        
         if (!pageUrl.contains("currency=" + currency)) {
             if (pageUrl.contains("?")) {
                 pageUrl += "&currency=" + currency;
@@ -317,7 +353,7 @@ public class ConvertController {
         private final double price;
         private final boolean soldOut;
         private final String hotel;
-        private final String currency; // **새로 추가**
+        private final String currency;
 
         public LinkInfo(String label, int cid, String url, double price, boolean soldOut, String hotel, String currency) {
             this.label = label;
@@ -335,7 +371,7 @@ public class ConvertController {
         public double getPrice() { return price; }
         public boolean isSoldOut() { return soldOut; }
         public String getHotel() { return hotel; }
-        public String getCurrency() { return currency; } // **새로 추가**
+        public String getCurrency() { return currency; }
     }
 
     public static record AffiliateLink(String label, String url) {}
