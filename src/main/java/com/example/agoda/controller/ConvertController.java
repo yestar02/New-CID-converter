@@ -79,36 +79,36 @@ public class ConvertController {
         String url = body.get("url");
         if (url == null || url.isBlank()) {
             return ResponseEntity.badRequest()
-                                 .body(Map.of("success", false, "message", "주소를 입력해주세요."));
+                .body(Map.of("success", false, "message", "주소를 입력해주세요."));
         }
         if (!url.contains("agoda.com") || !url.contains("cid=")) {
             return ResponseEntity.badRequest()
-                                 .body(Map.of("success", false, "message", "유효한 아고다 상세 URL을 입력해주세요."));
+                .body(Map.of("success", false, "message", "유효한 아고다 상세 URL을 입력해주세요."));
         }
 
         List<CidEntry> cidList = buildCidList();
         List<LinkInfo> results = new ArrayList<>();
 
-        System.out.println("총 " + cidList.size() + "개 CID로 순차적 가격 수집 시작...");
+        System.out.printf("총 %d개 CID 순차적 처리 시작...%n", cidList.size());
         for (int i = 0; i < cidList.size(); i++) {
             CidEntry entry = cidList.get(i);
             System.out.printf("(%d/%d) %s 처리 중...%n", i + 1, cidList.size(), entry.label());
             results.add(fetchSequentially(url, entry));
         }
-        System.out.println("모든 CID 가격 수집 완료!");
+        System.out.println("모든 CID 처리 완료!");
 
         String hotelName = results.stream()
-                                  .map(LinkInfo::getHotel)
-                                  .filter(Objects::nonNull)
-                                  .findFirst()
-                                  .orElse("호텔명 없음");
+            .map(LinkInfo::getHotel)
+            .filter(Objects::nonNull)
+            .findFirst()
+            .orElse("호텔명 없음");
 
         LinkInfo cheapest = results.stream()
-                                   .filter(r -> !r.isSoldOut() && r.getPrice() > 0)
-                                   .min(Comparator.comparingDouble(LinkInfo::getPrice))
-                                   .orElse(null);
+            .filter(r -> !r.isSoldOut() && r.getPrice() > 0)
+            .min(Comparator.comparingDouble(LinkInfo::getPrice))
+            .orElse(null);
 
-        Map<String, Object> resp = new LinkedHashMap<>();
+        Map<String,Object> resp = new LinkedHashMap<>();
         resp.put("success", true);
         resp.put("hotel", hotelName);
         resp.put("priced", results);
@@ -116,33 +116,51 @@ public class ConvertController {
         resp.put("affiliateLinks", AFFILIATES);
         resp.put("totalCids", cidList.size());
         resp.put("collectedResults", results.size());
-
         return ResponseEntity.ok(resp);
     }
 
     private LinkInfo fetchSequentially(String baseUrl, CidEntry entry) {
-        // CID만 교체, 나머지 파라미터 그대로 유지
         String modUrl = baseUrl.replaceAll("cid=-?\\d+", "cid=" + entry.cid());
 
         int maxAttempts = 3;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
                 JsonNode root = fetchSecondaryDataJson(modUrl);
+
                 String hotel = root.path("hotelInfo").path("name").asText(null);
                 double price = root.path("mosaicInitData")
                                    .path("discount")
                                    .path("cheapestPrice")
                                    .asDouble(0);
+                String currency = root.path("mosaicInitData")
+                                      .path("discount")
+                                      .path("currency")
+                                      .asText("UNKNOWN");
+
                 boolean soldOut = price == 0;
-                System.out.printf(
-                    soldOut
-                        ? "✗ %s (CID: %d) - 품절%n"
-                        : "✓ %s (CID: %d) - 가격: %.2f%n",
-                    entry.label(), entry.cid(), price
-                );
+                String symbol = "USD".equals(currency) ? "$"
+                              : "KRW".equals(currency) ? "₩"
+                              : currency + " ";
+
+                if (soldOut) {
+                    System.out.printf("✗ %s (CID: %d) - 품절 (currency: %s)%n",
+                        entry.label(), entry.cid(), currency);
+                } else {
+                    if ("KRW".equals(currency)) {
+                        System.out.printf("✓ %s (CID: %d) - 가격: %s%,.0f%n",
+                            entry.label(), entry.cid(), symbol, price);
+                    } else {
+                        System.out.printf("✓ %s (CID: %d) - 가격: %s%,.2f%n",
+                            entry.label(), entry.cid(), symbol, price);
+                    }
+                }
+
                 return new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel);
+
             } catch (Exception e) {
                 if (attempt == maxAttempts) {
+                    System.out.printf("✗ %s (CID: %d) - 실패: %s%n",
+                        entry.label(), entry.cid(), e.getMessage());
                     return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
                 }
                 try { Thread.sleep(1000L * attempt); }
@@ -152,31 +170,29 @@ public class ConvertController {
         return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
     }
 
+    // 필수 헤더만 반영한 간소화된 fetchSecondaryDataJson
     private JsonNode fetchSecondaryDataJson(String hotelPageUrl) throws Exception {
-        // 페이지 URL은 이미 currencyCode 파라미터를 포함하므로 그대로 사용
         Document doc = Jsoup.connect(hotelPageUrl)
             .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
             .header("ag-language-locale", "ko-kr")
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            .header("User-Agent", "Mozilla/5.0")
             .timeout((int) Duration.ofSeconds(15).toMillis())
             .get();
 
         Element script = doc.selectFirst("script[data-selenium=script-initparam]");
         String initJson = script != null
-                        ? (script.data().isEmpty() ? script.text() : script.data())
-                        : "";
+            ? (script.data().isEmpty() ? script.text() : script.data())
+            : "";
         String apiPath = initJson.split("apiUrl\\s*=\\s*\"")[1]
                                  .split("\"")[0]
                                  .replace("&amp;", "&");
-
         String apiUrl = "https://www.agoda.com" + apiPath;
-        // API URL 역시 currencyCode=KRW 파라미터를 initJson에 포함된 상태로 전달
 
         HttpRequest req = HttpRequest.newBuilder()
             .uri(URI.create(apiUrl))
             .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
             .header("ag-language-locale", "ko-kr")
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            .header("User-Agent", "Mozilla/5.0")
             .header("Referer", hotelPageUrl)
             .timeout(Duration.ofSeconds(20))
             .GET()
