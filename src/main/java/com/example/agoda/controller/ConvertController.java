@@ -19,34 +19,34 @@ import java.util.*;
 @RequestMapping("/api")
 public class ConvertController {
 
-    // 고정 CID 목록
+    // 고정 CID 목록 (전체 유지)
     private static final List<CidEntry> STATIC_CIDS = List.of(
-        new CidEntry("구글 지도 1", 1833982),
-        new CidEntry("구글 지도 2", 1917614),
-        new CidEntry("구글 지도 3", 1829668),
-        new CidEntry("구글 검색 1", 1908617),
-        new CidEntry("구글 검색 2", 1921868),
-        new CidEntry("구글 검색 3", 1922847),
-        new CidEntry("네이버", 1881505),
-        new CidEntry("Bing", 1911217),
-        new CidEntry("다음", 1908762),
-        new CidEntry("DuckDuckGo", 1895204),
-        new CidEntry("국민카드", 1563295),
-        new CidEntry("우리카드", 1654104),
-        new CidEntry("우리카드(마스터)", 1932810),
-        new CidEntry("현대카드", 1768446),
-        new CidEntry("BC카드", 1748498),
-        new CidEntry("신한카드", 1760133),
-        new CidEntry("신한카드(마스터)", 1917257),
-        new CidEntry("토스", 1917334),
-        new CidEntry("하나카드", 1729471),
-        new CidEntry("카카오페이", 1845109),
-        new CidEntry("마스터카드", 1889572),
-        new CidEntry("유니온페이", 1801110),
-        new CidEntry("비자", 1889319),
+        new CidEntry("구글 지도 1",    1833982),
+        new CidEntry("구글 지도 2",    1917614),
+        new CidEntry("구글 지도 3",    1829668),
+        new CidEntry("구글 검색 1",    1908617),
+        new CidEntry("구글 검색 2",    1921868),
+        new CidEntry("구글 검색 3",    1922847),
+        new CidEntry("네이버",         1881505),
+        new CidEntry("Bing",          1911217),
+        new CidEntry("다음",          1908762),
+        new CidEntry("DuckDuckGo",    1895204),
+        new CidEntry("국민카드",       1563295),
+        new CidEntry("우리카드",       1654104),
+        new CidEntry("우리카드(마스터)",1932810),
+        new CidEntry("현대카드",       1768446),
+        new CidEntry("BC카드",         1748498),
+        new CidEntry("신한카드",       1760133),
+        new CidEntry("신한카드(마스터)",1917257),
+        new CidEntry("토스",           1917334),
+        new CidEntry("하나카드",       1729471),
+        new CidEntry("카카오페이",     1845109),
+        new CidEntry("마스터카드",     1889572),
+        new CidEntry("유니온페이",     1801110),
+        new CidEntry("비자",           1889319),
         new CidEntry("대한항공(적립)", 1904827),
-        new CidEntry("아시아나항공(적립)", 1806212),
-        new CidEntry("에어서울", 1800120)
+        new CidEntry("아시아나항공(적립)",1806212),
+        new CidEntry("에어서울",       1800120)
     );
 
     // 제휴 링크 목록
@@ -131,146 +131,84 @@ public class ConvertController {
                 JsonNode root = fetchSecondaryDataJson(modUrl, currency);
 
                 String hotel = root.path("hotelInfo").path("name").asText(null);
-                String actualCurrency = root.path("searchInfo").path("currency").asText(currency);
-                double price = extractPrice(root);
+                double price = root.path("mosaicInitData")
+                                   .path("discount")
+                                   .path("cheapestPrice")
+                                   .asDouble(0);
 
                 boolean soldOut = price == 0;
                 System.out.printf(
                     soldOut
                         ? "✗ %s (CID: %d) - 품절%n"
                         : "✓ %s (CID: %d) - 가격: %.2f %s%n",
-                    entry.label(), entry.cid(), price, actualCurrency
+                    entry.label(), entry.cid(), price, currency
                 );
 
-                return new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel, actualCurrency);
+                return new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel);
 
             } catch (Exception e) {
                 if (attempt == maxAttempts) {
                     System.out.printf("✗ %s (CID: %d) - 실패: %s%n", entry.label(), entry.cid(), e.getMessage());
-                    return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null, currency);
+                    return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
                 }
                 try { Thread.sleep(1000L * attempt); }
                 catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
             }
         }
-        return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null, currency);
+        return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
     }
 
     private JsonNode fetchSecondaryDataJson(String hotelPageUrl, String currency) throws Exception {
-        String pageUrl = addCurrencyToPageUrl(hotelPageUrl, currency);
-        String cookieHeader = buildKoreanCookies();
-
-        Document doc = Jsoup.connect(pageUrl)
+        // HTML 파싱 시 UTF-8 처리 + Python requests와 동일한 언어 헤더 추가
+        Document doc = Jsoup.connect(hotelPageUrl)
             .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
-            .header("ag-language-locale", "ko-kr")   // 추가된 헤더
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-            .header("Cookie", cookieHeader)
+            .header("ag-language-locale", "ko-kr")       // ← Python과 동일하게 추가
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
             .timeout((int) Duration.ofSeconds(15).toMillis())
             .get();
 
         Element script = doc.selectFirst("script[data-selenium=script-initparam]");
-        String initJson = script != null
+        String content = script != null
             ? (script.data().isEmpty() ? script.text() : script.data())
             : "";
-        String apiPath = initJson.split("apiUrl\\s*=\\s*\"")[1]
-                                 .split("\"")[0]
-                                 .replace("&amp;", "&");
-
+        String apiPath = content.split("apiUrl\\s*=\\s*\"")[1]
+                                .split("\"")[0]
+                                .replace("&amp;", "&");
         String apiUrl = "https://www.agoda.com" + apiPath;
-        apiUrl = addCurrencyParameter(apiUrl, currency);
 
-        HttpRequest req = HttpRequest.newBuilder()
+        HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(apiUrl))
             .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
-            .header("ag-language-locale", "ko-kr")   // 추가된 헤더
+            .header("ag-language-locale", "ko-kr")       // ← Python과 동일하게 추가
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-            .header("Cookie", cookieHeader)
-            .header("Referer", pageUrl)
+            .header("Referer", hotelPageUrl)
             .timeout(Duration.ofSeconds(20))
             .GET()
             .build();
 
-        HttpResponse<String> res = httpClient.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        return mapper.readTree(res.body());
-    }
-
-    private double extractPrice(JsonNode root) {
-        double p = root.path("mosaicInitData").path("discount").path("cheapestPrice").asDouble(0);
-        if (p == 0) p = root.path("stickyFooter").path("discount").path("cheapestPrice").asDouble(0);
-        if (p == 0) {
-            JsonNode sr = root.path("searchResult").path("searchResults");
-            if (sr.isArray() && sr.size() > 0) {
-                p = sr.get(0).path("pricing").path("price").asDouble(0);
-            }
-        }
-        if (p == 0) {
-            String txt = root.path("stickyFooter")
-                             .path("discount")
-                             .path("cheapestPriceWithCurrency")
-                             .asText("");
-            if (!txt.isEmpty()) {
-                String num = txt.replaceAll("[^0-9.]", "");
-                if (!num.isEmpty()) {
-                    try { p = Double.parseDouble(num); } catch (NumberFormatException ignored) {}
-                }
-            }
-        }
-        return p;
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        return mapper.readTree(response.body());
     }
 
     private String extractCurrencyFromUrl(String url) {
-        if (url.contains("currencyCode=")) {
-            return url.split("currencyCode=")[1].split("&")[0].toUpperCase();
-        }
         if (url.contains("currency=")) {
             return url.split("currency=")[1].split("&")[0].toUpperCase();
         }
         return "KRW";
     }
 
-    private String addCurrencyToPageUrl(String url, String currency) {
-        if (!url.contains("currencyCode=" + currency)) {
-            url += url.contains("?") ? "&currencyCode=" : "?currencyCode=";
-            url += currency;
-        }
-        if (url.contains("agoda.com/")) {
-            url = url.replace("agoda.com/", "agoda.com/ko-kr/")
-                     .replace("/ko-kr/ko-kr/", "/ko-kr/");
-        }
-        return url;
-    }
-
-    private String addCurrencyParameter(String apiUrl, String currency) {
-        if (!apiUrl.contains("currencyCode=" + currency)) {
-            apiUrl += apiUrl.contains("?") ? "&currencyCode=" : "?currencyCode=";
-            apiUrl += currency;
-        }
-        return apiUrl;
-    }
-
-    private String buildKoreanCookies() {
-        return String.join("; ",
-            "selectedLanguage=ko-kr", "selectedCurrency=KRW", "country=KR", "locale=ko-KR",
-            "language=ko-kr", "currency=KRW", "countrysite=KR",
-            "userPreferredLanguage=ko-kr", "userPreferredCurrency=KRW",
-            "AG_CURRENCY=KRW", "AG_LANGUAGE=ko-kr", "AG_COUNTRY=KR",
-            "cookieConsent=1", "geolocation=KR", "timezone=Asia%2FSeoul", "deviceType=desktop"
-        );
-    }
-
     private List<CidEntry> buildCidList() {
-        Random rnd = new Random();
-        Set<Integer> randomFive = new LinkedHashSet<>();
-        while (randomFive.size() < 5) {
-            randomFive.add(rnd.nextInt(2000000 - 1800000 + 1) + 1800000);
+        Set<Integer> rnd = new LinkedHashSet<>();
+        Random rand = new Random();
+        while (rnd.size() < 5) {
+            rnd.add(rand.nextInt(2000000 - 1800000 + 1) + 1800000);
         }
         List<CidEntry> list = new ArrayList<>(STATIC_CIDS);
-        randomFive.forEach(cid -> list.add(new CidEntry("AUTO-" + cid, cid)));
+        rnd.forEach(cid -> list.add(new CidEntry("AUTO-" + cid, cid)));
         return list;
     }
 
     public static record CidEntry(String label, int cid) {}
-    public static record AffiliateLink(String label, String url) {}
 
     public static class LinkInfo {
         private final String label;
@@ -279,25 +217,23 @@ public class ConvertController {
         private final double price;
         private final boolean soldOut;
         private final String hotel;
-        private final String currency;
 
-        public LinkInfo(String label, int cid, String url,
-                        double price, boolean soldOut, String hotel, String currency) {
+        public LinkInfo(String label, int cid, String url, double price, boolean soldOut, String hotel) {
             this.label = label;
             this.cid = cid;
             this.url = url;
             this.price = price;
             this.soldOut = soldOut;
             this.hotel = hotel;
-            this.currency = currency;
         }
 
-        public String getLabel()    { return label; }
-        public int getCid()         { return cid; }
-        public String getUrl()      { return url; }
-        public double getPrice()    { return price; }
-        public boolean isSoldOut()  { return soldOut; }
-        public String getHotel()    { return hotel; }
-        public String getCurrency() { return currency; }
+        public String getLabel() { return label; }
+        public int getCid() { return cid; }
+        public String getUrl() { return url; }
+        public double getPrice() { return price; }
+        public boolean isSoldOut() { return soldOut; }
+        public String getHotel() { return hotel; }
     }
+
+    public static record AffiliateLink(String label, String url) {}
 }
