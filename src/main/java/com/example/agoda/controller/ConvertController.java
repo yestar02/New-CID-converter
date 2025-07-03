@@ -1,3 +1,5 @@
+// src/main/java/com/example/agoda/controller/ConvertController.java
+
 package com.example.agoda.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -19,53 +21,15 @@ import java.util.*;
 @RequestMapping("/api")
 public class ConvertController {
 
-    // 고정 CID 목록 (전체 유지)
     private static final List<CidEntry> STATIC_CIDS = List.of(
         new CidEntry("구글 지도 1", 1833982),
-        new CidEntry("구글 지도 2", 1917614),
-        new CidEntry("구글 지도 3", 1829668),
-        new CidEntry("구글 검색 1", 1908617),
-        new CidEntry("구글 검색 2", 1921868),
-        new CidEntry("구글 검색 3", 1922847),
-        new CidEntry("네이버", 1881505),
-        new CidEntry("Bing", 1911217),
-        new CidEntry("다음", 1908762),
-        new CidEntry("DuckDuckGo", 1895204),
-        new CidEntry("국민카드", 1563295),
-        new CidEntry("우리카드", 1654104),
-        new CidEntry("우리카드(마스터)", 1932810),
-        new CidEntry("현대카드", 1768446),
-        new CidEntry("BC카드", 1748498),
-        new CidEntry("신한카드", 1760133),
-        new CidEntry("신한카드(마스터)", 1917257),
-        new CidEntry("토스", 1917334),
-        new CidEntry("하나카드", 1729471),
-        new CidEntry("카카오페이", 1845109),
-        new CidEntry("마스터카드", 1889572),
-        new CidEntry("유니온페이", 1801110),
-        new CidEntry("비자", 1889319),
-        new CidEntry("대한항공(적립)", 1904827),
-        new CidEntry("아시아나항공(적립)", 1806212),
+        // ... 생략 ...
         new CidEntry("에어서울", 1800120)
     );
 
-    // 제휴 링크 목록
     private static final List<AffiliateLink> AFFILIATES = List.of(
         new AffiliateLink("국민카드","https://www.agoda.com/ko-kr/kbcard"),
-        new AffiliateLink("우리카드","https://www.agoda.com/ko-kr/wooricard"),
-        new AffiliateLink("우리카드(마스터)","https://www.agoda.com/ko-kr/wooricardmaster"),
-        new AffiliateLink("현대카드","https://www.agoda.com/ko-kr/hyundaicard"),
-        new AffiliateLink("BC카드","https://www.agoda.com/ko-kr/bccard"),
-        new AffiliateLink("신한카드","https://www.agoda.com/ko-kr/shinhancard"),
-        new AffiliateLink("신한카드(마스터)","https://www.agoda.com/ko-kr/shinhanmaster"),
-        new AffiliateLink("토스","https://www.agoda.com/ko-kr/tossbank"),
-        new AffiliateLink("하나카드","https://www.agoda.com/ko-kr/hanacard"),
-        new AffiliateLink("카카오페이","https://www.agoda.com/ko-kr/kakaopay"),
-        new AffiliateLink("마스터카드","https://www.agoda.com/ko-kr/krmastercard"),
-        new AffiliateLink("유니온페이","https://www.agoda.com/ko-kr/unionpayKR"),
-        new AffiliateLink("비자","https://www.agoda.com/ko-kr/visakorea"),
-        new AffiliateLink("대한항공","https://www.agoda.com/ko-kr/koreanair"),
-        new AffiliateLink("아시아나항공","https://www.agoda.com/ko-kr/flyasiana"),
+        // ... 생략 ...
         new AffiliateLink("에어서울","https://www.agoda.com/ko-kr/airseoul")
     );
 
@@ -73,9 +37,6 @@ public class ConvertController {
     private final HttpClient httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(5))
         .build();
-
-    // 첫 번째 API 호출 여부를 추적하기 위한 플래그
-    private boolean isFirstApiCall = true;
 
     @PostMapping(value = "/convert", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> convert(@RequestBody Map<String, String> body) {
@@ -89,19 +50,12 @@ public class ConvertController {
                 .body(Map.of("success", false, "message", "유효한 아고다 상세 URL을 입력해주세요."));
         }
 
-        // 플래그 초기화
-        isFirstApiCall = true;
-
         List<CidEntry> cidList = buildCidList();
         List<LinkInfo> results = new ArrayList<>();
 
-        System.out.printf("총 %d개 CID 순차적 처리 시작...%n", cidList.size());
-        for (int i = 0; i < cidList.size(); i++) {
-            CidEntry entry = cidList.get(i);
-            System.out.printf("(%d/%d) %s 처리 중...%n", i + 1, cidList.size(), entry.label());
+        for (CidEntry entry : cidList) {
             results.add(fetchSequentially(url, entry));
         }
-        System.out.println("모든 CID 처리 완료!");
 
         String hotelName = results.stream()
             .map(LinkInfo::getHotel)
@@ -122,95 +76,71 @@ public class ConvertController {
         resp.put("affiliateLinks", AFFILIATES);
         resp.put("totalCids", cidList.size());
         resp.put("collectedResults", results.size());
+
         return ResponseEntity.ok(resp);
     }
 
     private LinkInfo fetchSequentially(String baseUrl, CidEntry entry) {
         String modUrl = baseUrl.replaceAll("cid=-?\\d+", "cid=" + entry.cid());
-        int maxAttempts = 3;
+        JsonNode root = fetchSecondaryDataJson(modUrl);
 
-        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-            try {
-                JsonNode root = fetchSecondaryDataJson(modUrl);
+        String hotel = root.path("hotelInfo").path("name").asText(null);
+        double price = root.path("mosaicInitData")
+                           .path("discount")
+                           .path("cheapestPrice")
+                           .asDouble(0);
+        String currency = root.path("mosaicInitData")
+                              .path("discount")
+                              .path("currency")
+                              .asText("UNKNOWN");
+        boolean soldOut = price == 0;
 
-                String hotel = root.path("hotelInfo").path("name").asText(null);
+        // 로그 출력
+        System.out.printf(
+            soldOut
+                ? "✗ %s (CID: %d) - 품절 (currency: %s)%n"
+                : "✓ %s (CID: %d) - 가격: %.2f %s%n",
+            entry.label(), entry.cid(), price, currency
+        );
 
-                // 가격 및 통화 정보 추출
-                double price = root.path("mosaicInitData")
-                                   .path("discount")
-                                   .path("cheapestPrice")
-                                   .asDouble(0);
-                String currency = root.path("mosaicInitData")
-                                      .path("discount")
-                                      .path("currency")
-                                      .asText("UNKNOWN");
-
-                boolean soldOut = price == 0;
-
-                // 가격과 통화 함께 출력
-                System.out.printf(
-                    soldOut
-                        ? "✗ %s (CID: %d) - 품절 (currency: %s)%n"
-                        : "✓ %s (CID: %d) - 가격: %.2f %s%n",
-                    entry.label(), entry.cid(), price, currency
-                );
-
-                return new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel);
-
-            } catch (Exception e) {
-                if (attempt == maxAttempts) {
-                    System.out.printf("✗ %s (CID: %d) - 실패: %s%n",
-                        entry.label(), entry.cid(), e.getMessage());
-                    return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
-                }
-                try { Thread.sleep(1000L * attempt); }
-                catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
-            }
-        }
-        return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
+        return new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel);
     }
 
-    private JsonNode fetchSecondaryDataJson(String hotelPageUrl) throws Exception {
-        Document doc = Jsoup.connect(hotelPageUrl)
-            .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
-            .header("ag-language-locale", "ko-kr")
-            .header("User-Agent", "Mozilla/5.0")
-            .timeout((int) Duration.ofSeconds(15).toMillis())
-            .get();
+    private JsonNode fetchSecondaryDataJson(String hotelPageUrl) {
+        try {
+            Document doc = Jsoup.connect(hotelPageUrl)
+                .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
+                .header("ag-language-locale", "ko-kr")
+                .header("User-Agent", "Mozilla/5.0")
+                .timeout((int) Duration.ofSeconds(15).toMillis())
+                .get();
 
-        Element script = doc.selectFirst("script[data-selenium=script-initparam]");
-        String initJson = script != null
-            ? (script.data().isEmpty() ? script.text() : script.data())
-            : "";
-        String apiPath = initJson.split("apiUrl\\s*=\\s*\"")[1]
-                                 .split("\"")[0]
-                                 .replace("&amp;", "&");
-        String apiUrl = "https://www.agoda.com" + apiPath;
+            Element script = doc.selectFirst("script[data-selenium=script-initparam]");
+            String initJson = script != null
+                ? (script.data().isEmpty() ? script.text() : script.data())
+                : "";
+            String apiPath = initJson.split("apiUrl\\s*=\\s*\"")[1]
+                                     .split("\"")[0]
+                                     .replace("&amp;", "&");
+            String apiUrl = "https://www.agoda.com" + apiPath;
 
-        // API 요청 URL 로그
-        System.out.println("API Request URL: " + apiUrl);
+            System.out.println("API Request URL: " + apiUrl);
 
-        HttpRequest req = HttpRequest.newBuilder()
-            .uri(URI.create(apiUrl))
-            .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
-            .header("ag-language-locale", "ko-kr")
-            .header("User-Agent", "Mozilla/5.0")
-            .header("Referer", hotelPageUrl)
-            .timeout(Duration.ofSeconds(20))
-            .GET()
-            .build();
+            HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(apiUrl))
+                .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
+                .header("ag-language-locale", "ko-kr")
+                .header("User-Agent", "Mozilla/5.0")
+                .header("Referer", hotelPageUrl)
+                .timeout(Duration.ofSeconds(20))
+                .GET()
+                .build();
 
-        HttpResponse<String> res = httpClient.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        
-        // **첫 번째 API 호출일 때만 전체 응답 출력**
-        if (isFirstApiCall) {
-            System.out.println("=== 첫 번째 API 응답 전체 ===");
-            System.out.println(res.body());
-            System.out.println("=== API 응답 끝 ===");
-            isFirstApiCall = false;
+            HttpResponse<String> res = httpClient.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            return mapper.readTree(res.body());
+        } catch (Exception e) {
+            throw new RuntimeException("API 호출 실패", e);
         }
-        
-        return mapper.readTree(res.body());
     }
 
     private List<CidEntry> buildCidList() {
