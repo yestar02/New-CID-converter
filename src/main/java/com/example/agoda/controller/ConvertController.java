@@ -74,7 +74,6 @@ public class ConvertController {
     private final HttpClient httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(5))
         .build();
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(8);
 
     @PostMapping(value = "/convert", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> convert(@RequestBody Map<String, String> body) {
@@ -88,15 +87,24 @@ public class ConvertController {
 
         // 무작위 CID 5개 추가
         List<CidEntry> cidList = buildCidList();
-        List<LinkInfo> results = Collections.synchronizedList(new ArrayList<>());
+        List<LinkInfo> results = new ArrayList<>();
+        
+        System.out.println("총 " + cidList.size() + "개 CID로 순차적 가격 수집 시작...");
 
-        // 병렬 호출 + 재시도
-        CompletableFuture<?>[] futures = cidList.stream()
-            .map(entry -> CompletableFuture.runAsync(() -> fetchWithRetry(url, entry, results), scheduler))
-            .toArray(CompletableFuture[]::new);
-        CompletableFuture.allOf(futures)
-            .completeOnTimeout(null, 20, TimeUnit.SECONDS)
-            .join();
+        // **핵심 수정: 순차적 처리**
+        for (int i = 0; i < cidList.size(); i++) {
+            CidEntry entry = cidList.get(i);
+            System.out.println("(" + (i + 1) + "/" + cidList.size() + ") " + entry.label() + " 처리 중...");
+            
+            LinkInfo result = fetchSequentially(url, entry);
+            results.add(result);
+            
+            // 진행률 표시
+            double progress = ((double)(i + 1) / cidList.size()) * 100;
+            System.out.printf("진행률: %.1f%% 완료\n", progress);
+        }
+
+        System.out.println("모든 CID 가격 수집 완료!");
 
         // 호텔명 취합
         String hotelName = results.stream()
@@ -117,13 +125,13 @@ public class ConvertController {
         resp.put("priced", results);
         resp.put("cheapest", cheapest);
         resp.put("affiliateLinks", AFFILIATES);
+        resp.put("totalCids", cidList.size());
+        resp.put("collectedResults", results.size());
         return ResponseEntity.ok(resp);
     }
 
-    private void fetchWithRetry(String baseUrl, CidEntry entry, List<LinkInfo> results) {
+    private LinkInfo fetchSequentially(String baseUrl, CidEntry entry) {
         String modUrl = baseUrl.replaceAll("cid=-?\\d+", "cid=" + entry.cid());
-        
-        // 원본 URL에서 통화 정보 추출
         String currency = extractCurrencyFromUrl(baseUrl);
         
         int maxAttempts = 3;
@@ -134,23 +142,38 @@ public class ConvertController {
                 // 호텔명
                 String hotel = root.path("hotelInfo").path("name").asText(null);
 
-                // 숫자로만 된 시작가 추출 (mosaicInitData.discount.cheapestPrice)
+                // 가격 추출
                 double price = root.path("mosaicInitData")
                                    .path("discount")
                                    .path("cheapestPrice")
                                    .asDouble(0);
 
                 boolean soldOut = price == 0;
-                results.add(new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel));
-                return;
+                
+                if (soldOut) {
+                    System.out.println("✗ " + entry.label() + " (CID: " + entry.cid() + ") - 품절");
+                } else {
+                    System.out.println("✓ " + entry.label() + " (CID: " + entry.cid() + ") - 가격: " + price + " " + currency);
+                }
+                
+                return new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel);
+                
             } catch (Exception e) {
                 if (i == maxAttempts) {
-                    results.add(new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null));
+                    System.out.println("✗ " + entry.label() + " (CID: " + entry.cid() + ") - 수집 실패: " + e.getMessage());
+                    return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
                 } else {
-                    try { Thread.sleep(1000L * i); } catch (InterruptedException ignored) {}
+                    System.out.println("⚠ " + entry.label() + " 재시도 " + i + "/" + maxAttempts + "...");
+                    try { 
+                        Thread.sleep(1000L * i); 
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                    }
                 }
             }
         }
+        
+        return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
     }
 
     private String extractCurrencyFromUrl(String url) {
