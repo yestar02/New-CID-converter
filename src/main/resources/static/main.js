@@ -10,7 +10,6 @@ const copy = text => navigator.clipboard.writeText(text);
 
 $('#frm').addEventListener('submit', async e => {
   e.preventDefault();
-
   const url = $('#agodaUrl').value.trim();
   if (!url) return alert('URL을 입력하세요.');
 
@@ -32,41 +31,46 @@ $('#frm').addEventListener('submit', async e => {
       return;
     }
 
-    // 호텔명과 최저가를 저장
-    const hotelName = res.hotel;
-    const cheapestPriceValue = res.cheapest && res.cheapest.price
-      ? res.cheapest.price
-      : 0;
-
-    // 결과창 타이틀 수정: (호텔이름) – (가격)원
-    const priceText = cheapestPriceValue > 0
-      ? cheapestPriceValue.toLocaleString() + '원'
-      : '가격 정보 없음';
-    $('#hotelTitle').textContent = `${hotelName} – ${priceText}`;
+    $('#hotelTitle').textContent = `${res.hotel} – 가격 비교`;
     $('#hotelTitle').style.display = 'block';
 
-    // 가격 비교 테이블 구성
     res.priced.forEach(item => {
       const tr = document.createElement('tr');
-      const priceDisplay = item.isSoldOut
-        ? '매진'
-        : item.price.toLocaleString();
+      const priceDisplay = item.isSoldOut ? '매진' : item.price.toLocaleString();
       const priceClass = item.isSoldOut ? 'sold-out' : '';
       tr.innerHTML = `
         <td>${item.label}</td>
         <td class="${priceClass}">${priceDisplay}</td>
-      `;
+        <td><a href="${item.url}" target="_blank">열기</a></td>
+        <td><button data-url="${item.url}">복사</button></td>`;
       $('#tbl tbody').appendChild(tr);
     });
+
+    const available = res.priced.filter(i => !i.isSoldOut && i.price > 0);
+    if (available.length) {
+      const best = available[0];
+      $('#cheapest').innerHTML = `
+        <td>🏆 최저가</td>
+        <td>${best.price.toLocaleString()}</td>
+        <td><a href="${best.url}" target="_blank">열기</a></td>
+        <td><button data-url="${best.url}">복사</button></td>`;
+    } else {
+      $('#cheapest').innerHTML = `
+        <td colspan="4" class="no-available">모든 객실이 매진입니다.</td>`;
+    }
+
     $('#tbl').style.display = 'table';
 
-    // 제휴 링크
-    res.affiliateLinks.forEach(aff => {
+    res.affiliateLinks.forEach(link => {
       const li = document.createElement('li');
-      li.innerHTML = `<a href="${aff.url}" target="_blank">${aff.label}</a>`;
+      li.innerHTML = `<a href="${link.url}" target="_blank">${link.label}</a>`;
       $('#affList').appendChild(li);
     });
     $('#aff').style.display = 'block';
+
+    document.querySelectorAll('button[data-url]').forEach(btn =>
+      btn.addEventListener('click', () => copy(btn.dataset.url))
+    );
 
   } catch (err) {
     console.error(err);
