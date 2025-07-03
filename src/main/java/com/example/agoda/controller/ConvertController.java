@@ -21,32 +21,32 @@ public class ConvertController {
 
     // 고정 CID 목록 (전체 유지)
     private static final List<CidEntry> STATIC_CIDS = List.of(
-        new CidEntry("구글 지도 1",    1833982),
-        new CidEntry("구글 지도 2",    1917614),
-        new CidEntry("구글 지도 3",    1829668),
-        new CidEntry("구글 검색 1",    1908617),
-        new CidEntry("구글 검색 2",    1921868),
-        new CidEntry("구글 검색 3",    1922847),
-        new CidEntry("네이버",         1881505),
-        new CidEntry("Bing",          1911217),
-        new CidEntry("다음",          1908762),
-        new CidEntry("DuckDuckGo",    1895204),
-        new CidEntry("국민카드",       1563295),
-        new CidEntry("우리카드",       1654104),
+        new CidEntry("구글 지도 1", 1833982),
+        new CidEntry("구글 지도 2", 1917614),
+        new CidEntry("구글 지도 3", 1829668),
+        new CidEntry("구글 검색 1", 1908617),
+        new CidEntry("구글 검색 2", 1921868),
+        new CidEntry("구글 검색 3", 1922847),
+        new CidEntry("네이버", 1881505),
+        new CidEntry("Bing", 1911217),
+        new CidEntry("다음", 1908762),
+        new CidEntry("DuckDuckGo", 1895204),
+        new CidEntry("국민카드", 1563295),
+        new CidEntry("우리카드", 1654104),
         new CidEntry("우리카드(마스터)",1932810),
-        new CidEntry("현대카드",       1768446),
-        new CidEntry("BC카드",         1748498),
-        new CidEntry("신한카드",       1760133),
+        new CidEntry("현대카드", 1768446),
+        new CidEntry("BC카드", 1748498),
+        new CidEntry("신한카드", 1760133),
         new CidEntry("신한카드(마스터)",1917257),
-        new CidEntry("토스",           1917334),
-        new CidEntry("하나카드",       1729471),
-        new CidEntry("카카오페이",     1845109),
-        new CidEntry("마스터카드",     1889572),
-        new CidEntry("유니온페이",     1801110),
-        new CidEntry("비자",           1889319),
-        new CidEntry("대한항공(적립)", 1904827),
+        new CidEntry("토스", 1917334),
+        new CidEntry("하나카드", 1729471),
+        new CidEntry("카카오페이", 1845109),
+        new CidEntry("마스터카드", 1889572),
+        new CidEntry("유니온페이", 1801110),
+        new CidEntry("비자", 1889319),
+        new CidEntry("대한항공(적립)",1904827),
         new CidEntry("아시아나항공(적립)",1806212),
-        new CidEntry("에어서울",       1800120)
+        new CidEntry("에어서울",1800120)
     );
 
     // 제휴 링크 목록
@@ -121,66 +121,49 @@ public class ConvertController {
 
     private LinkInfo fetchSequentially(String baseUrl, CidEntry entry) {
         String modUrl = baseUrl.replaceAll("cid=-?\\d+", "cid=" + entry.cid());
-        int maxAttempts = 10;
-        long retryIntervalMillis = 2000L;
+        int maxAttempts = 3;
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
                 JsonNode root = fetchSecondaryDataJson(modUrl);
 
+                String hotel = root.path("hotelInfo").path("name").asText(null);
+
+                // 가격 및 통화 정보 추출
                 double price = root.path("mosaicInitData")
                                    .path("discount")
                                    .path("cheapestPrice")
-                                   .asDouble(-1);
+                                   .asDouble(0);
                 String currency = root.path("mosaicInitData")
                                       .path("discount")
                                       .path("currency")
                                       .asText("UNKNOWN");
-                boolean apiSoldOut = root.path("mosaicInitData")
-                                         .path("discount")
-                                         .path("isSoldOut")
-                                         .asBoolean(false);
-                String hotel = root.path("hotelInfo").path("name").asText("호텔명 없음");
 
-                // 아직 가격 미준비 시 재시도
-                if ((price < 0 || price == 0) && !apiSoldOut && attempt < maxAttempts) {
-                    Thread.sleep(retryIntervalMillis);
-                    continue;
-                }
+                boolean soldOut = price == 0;
 
-                boolean soldOut = apiSoldOut || price == 0;
-                String symbol = "KRW".equals(currency) ? "₩" :
-                                "USD".equals(currency) ? "$" : currency + " ";
-
-                if (soldOut) {
-                    System.out.printf("✗ %s (CID: %d) - 품절 (currency: %s)%n",
-                        entry.label(), entry.cid(), currency);
-                } else {
-                    if ("KRW".equals(currency)) {
-                        System.out.printf("✓ %s (CID: %d) - 가격: %s%,.0f%n",
-                            entry.label(), entry.cid(), symbol, price);
-                    } else {
-                        System.out.printf("✓ %s (CID: %d) - 가격: %s%,.2f%n",
-                            entry.label(), entry.cid(), symbol, price);
-                    }
-                }
+                // 로그에 가격과 통화 함께 출력
+                System.out.printf(
+                    soldOut
+                        ? "✗ %s (CID: %d) - 품절 (currency: %s)%n"
+                        : "✓ %s (CID: %d) - 가격: %.2f %s%n",
+                    entry.label(), entry.cid(), price, currency
+                );
 
                 return new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel);
 
             } catch (Exception e) {
                 if (attempt == maxAttempts) {
-                    System.out.printf("✗ %s (CID: %d) - 최종 실패: %s%n",
+                    System.out.printf("✗ %s (CID: %d) - 실패: %s%n",
                         entry.label(), entry.cid(), e.getMessage());
                     return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
                 }
-                try { Thread.sleep(retryIntervalMillis); }
+                try { Thread.sleep(1000L * attempt); }
                 catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
             }
         }
         return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
     }
 
-    // 최소한의 헤더로 언어·통화 유지
     private JsonNode fetchSecondaryDataJson(String hotelPageUrl) throws Exception {
         Document doc = Jsoup.connect(hotelPageUrl)
             .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
