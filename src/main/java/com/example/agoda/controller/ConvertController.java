@@ -74,6 +74,9 @@ public class ConvertController {
         .connectTimeout(Duration.ofSeconds(5))
         .build();
 
+    // 첫 번째 API 호출 여부를 추적하기 위한 플래그
+    private boolean isFirstApiCall = true;
+
     @PostMapping(value = "/convert", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> convert(@RequestBody Map<String, String> body) {
         String url = body.get("url");
@@ -85,6 +88,9 @@ public class ConvertController {
             return ResponseEntity.badRequest()
                 .body(Map.of("success", false, "message", "유효한 아고다 상세 URL을 입력해주세요."));
         }
+
+        // 플래그 초기화
+        isFirstApiCall = true;
 
         List<CidEntry> cidList = buildCidList();
         List<LinkInfo> results = new ArrayList<>();
@@ -141,9 +147,6 @@ public class ConvertController {
 
                 boolean soldOut = price == 0;
 
-                // API 요청 URL 로그
-                System.out.println("API 요청 URL: " + root.path("mosaicInitData").path("discount").path("apiUrl").asText());
-
                 // 가격과 통화 함께 출력
                 System.out.printf(
                     soldOut
@@ -198,6 +201,15 @@ public class ConvertController {
             .build();
 
         HttpResponse<String> res = httpClient.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        
+        // **첫 번째 API 호출일 때만 전체 응답 출력**
+        if (isFirstApiCall) {
+            System.out.println("=== 첫 번째 API 응답 전체 ===");
+            System.out.println(res.body());
+            System.out.println("=== API 응답 끝 ===");
+            isFirstApiCall = false;
+        }
+        
         return mapper.readTree(res.body());
     }
 
