@@ -122,10 +122,14 @@ public class ConvertController {
 
     private void fetchWithRetry(String baseUrl, CidEntry entry, List<LinkInfo> results) {
         String modUrl = baseUrl.replaceAll("cid=-?\\d+", "cid=" + entry.cid());
+        
+        // 원본 URL에서 통화 정보 추출
+        String currency = extractCurrencyFromUrl(baseUrl);
+        
         int maxAttempts = 3;
         for (int i = 1; i <= maxAttempts; i++) {
             try {
-                JsonNode root = fetchSecondaryDataJson(modUrl);
+                JsonNode root = fetchSecondaryDataJson(modUrl, currency);
 
                 // 호텔명
                 String hotel = root.path("hotelInfo").path("name").asText(null);
@@ -135,10 +139,6 @@ public class ConvertController {
                                    .path("discount")
                                    .path("cheapestPrice")
                                    .asDouble(0);
-                // 콤마 포함 문자열이 필요하다면:
-                // String raw = root.path("stickyFooter").path("discount").path("cheapestPriceWithCurrency").asText("");
-                // String numeric = raw.replaceAll("[^0-9]", "");
-                // price = numeric.isBlank() ? 0 : Double.parseDouble(numeric);
 
                 boolean soldOut = price == 0;
                 results.add(new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel));
@@ -153,7 +153,19 @@ public class ConvertController {
         }
     }
 
-    private JsonNode fetchSecondaryDataJson(String hotelPageUrl) throws Exception {
+    private String extractCurrencyFromUrl(String url) {
+        // URL에서 currency 파라미터 추출 (예: currency=KRW)
+        if (url.contains("currency=")) {
+            String[] parts = url.split("currency=");
+            if (parts.length > 1) {
+                String currencyPart = parts[1].split("&")[0];
+                return currencyPart.toUpperCase();
+            }
+        }
+        return "KRW"; // 기본값을 한화로 설정
+    }
+
+    private JsonNode fetchSecondaryDataJson(String hotelPageUrl, String currency) throws Exception {
         // HTML 파싱 시 UTF-8 처리
         Document doc = Jsoup.connect(hotelPageUrl)
             .header("Accept-Language","ko-KR,ko;q=0.9,en;q=0.8")
@@ -168,6 +180,9 @@ public class ConvertController {
                                 .split("\"")[0]
                                 .replace("&amp;","&");
         String apiUrl = "https://www.agoda.com" + apiPath;
+        
+        // **핵심 수정: currency 파라미터 추가**
+        apiUrl = addCurrencyParameter(apiUrl, currency);
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(apiUrl))
@@ -179,6 +194,17 @@ public class ConvertController {
             .build();
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         return mapper.readTree(response.body());
+    }
+
+    private String addCurrencyParameter(String apiUrl, String currency) {
+        if (!apiUrl.contains("currency=" + currency)) {
+            if (apiUrl.contains("?")) {
+                apiUrl += "&currency=" + currency;
+            } else {
+                apiUrl += "?currency=" + currency;
+            }
+        }
+        return apiUrl;
     }
 
     private List<CidEntry> buildCidList() {
