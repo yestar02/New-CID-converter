@@ -5,9 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
-import org.springframework.core.io.ByteArrayResource;
-import org.springframework.core.io.Resource;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -16,8 +13,6 @@ import java.net.URI;
 import java.net.http.*;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 @RestController
@@ -79,11 +74,8 @@ public class ConvertController {
         .connectTimeout(Duration.ofSeconds(5))
         .build();
 
-    // 첫 번째 API 응답을 저장할 변수들
+    // 첫 번째 API 호출 여부를 추적하기 위한 플래그
     private boolean isFirstApiCall = true;
-    private String firstApiResponse = null;
-    private String firstApiUrl = null;
-    private String timestamp = null;
 
     @PostMapping(value = "/convert", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> convert(@RequestBody Map<String, String> body) {
@@ -97,11 +89,8 @@ public class ConvertController {
                 .body(Map.of("success", false, "message", "유효한 아고다 상세 URL을 입력해주세요."));
         }
 
-        // 플래그 및 응답 데이터 초기화
+        // 플래그 초기화
         isFirstApiCall = true;
-        firstApiResponse = null;
-        firstApiUrl = null;
-        timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
 
         List<CidEntry> cidList = buildCidList();
         List<LinkInfo> results = new ArrayList<>();
@@ -133,38 +122,7 @@ public class ConvertController {
         resp.put("affiliateLinks", AFFILIATES);
         resp.put("totalCids", cidList.size());
         resp.put("collectedResults", results.size());
-        
-        // 첫 번째 API 응답이 있으면 다운로드 링크 추가
-        if (firstApiResponse != null) {
-            resp.put("downloadApiResponse", "/api/download-first-response");
-        }
-        
         return ResponseEntity.ok(resp);
-    }
-
-    // 첫 번째 API 응답 다운로드 엔드포인트
-    @GetMapping("/download-first-response")
-    public ResponseEntity<Resource> downloadFirstApiResponse() {
-        if (firstApiResponse == null) {
-            return ResponseEntity.notFound().build();
-        }
-
-        // 파일명 생성
-        String filename = String.format("agoda_api_response_%s.json", timestamp);
-        
-        // 파일 내용 생성 (API URL과 응답 포함)
-        String fileContent = String.format(
-            "API URL: %s%n%nTimestamp: %s%n%nAPI Response:%n%s",
-            firstApiUrl, timestamp, firstApiResponse
-        );
-
-        ByteArrayResource resource = new ByteArrayResource(fileContent.getBytes(StandardCharsets.UTF_8));
-
-        return ResponseEntity.ok()
-            .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
-            .contentType(MediaType.APPLICATION_OCTET_STREAM)
-            .contentLength(resource.contentLength())
-            .body(resource);
     }
 
     private LinkInfo fetchSequentially(String baseUrl, CidEntry entry) {
@@ -244,12 +202,12 @@ public class ConvertController {
 
         HttpResponse<String> res = httpClient.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         
-        // **첫 번째 API 호출일 때만 응답 저장**
+        // **첫 번째 API 호출일 때만 전체 응답 출력**
         if (isFirstApiCall) {
-            firstApiResponse = res.body();
-            firstApiUrl = apiUrl;
+            System.out.println("=== 첫 번째 API 응답 전체 ===");
+            System.out.println(res.body());
+            System.out.println("=== API 응답 끝 ===");
             isFirstApiCall = false;
-            System.out.println("첫 번째 API 응답이 저장되었습니다. /api/download-first-response로 다운로드 가능합니다.");
         }
         
         return mapper.readTree(res.body());
