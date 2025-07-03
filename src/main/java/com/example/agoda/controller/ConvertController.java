@@ -132,36 +132,36 @@ public class ConvertController {
 
     private LinkInfo fetchSequentially(String baseUrl, CidEntry entry) {
         String modUrl = baseUrl.replaceAll("cid=-?\\d+", "cid=" + entry.cid());
-        String currency = extractCurrencyFromUrl(baseUrl);
+        String expectedCurrency = extractCurrencyFromUrl(baseUrl);
         
         int maxAttempts = 3;
         for (int i = 1; i <= maxAttempts; i++) {
             try {
-                JsonNode root = fetchSecondaryDataJson(modUrl, currency);
+                JsonNode root = fetchSecondaryDataJson(modUrl, expectedCurrency);
 
                 // 호텔명
                 String hotel = root.path("hotelInfo").path("name").asText(null);
 
-                // 가격 추출
-                double price = root.path("mosaicInitData")
-                                   .path("discount")
-                                   .path("cheapestPrice")
-                                   .asDouble(0);
-
+                // **핵심 수정: 통화 정보 추출 및 확인**
+                String actualCurrency = root.path("searchInfo").path("currency").asText(expectedCurrency);
+                
+                // 가격 추출 (여러 경로 시도)
+                double price = extractPrice(root, actualCurrency);
+                
                 boolean soldOut = price == 0;
                 
                 if (soldOut) {
                     System.out.println("✗ " + entry.label() + " (CID: " + entry.cid() + ") - 품절");
                 } else {
-                    System.out.println("✓ " + entry.label() + " (CID: " + entry.cid() + ") - 가격: " + price + " " + currency);
+                    System.out.println("✓ " + entry.label() + " (CID: " + entry.cid() + ") - 가격: " + price + " " + actualCurrency);
                 }
                 
-                return new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel);
+                return new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel, actualCurrency);
                 
             } catch (Exception e) {
                 if (i == maxAttempts) {
                     System.out.println("✗ " + entry.label() + " (CID: " + entry.cid() + ") - 수집 실패: " + e.getMessage());
-                    return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
+                    return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null, expectedCurrency);
                 } else {
                     System.out.println("⚠ " + entry.label() + " 재시도 " + i + "/" + maxAttempts + "...");
                     try { 
@@ -173,7 +173,59 @@ public class ConvertController {
             }
         }
         
-        return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
+        return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null, expectedCurrency);
+    }
+
+    private double extractPrice(JsonNode root, String currency) {
+        // **다양한 경로에서 가격 추출 시도**
+        
+        // 1. 기존 경로
+        double price = root.path("mosaicInitData")
+                          .path("discount")
+                          .path("cheapestPrice")
+                          .asDouble(0);
+        
+        if (price > 0) {
+            return price;
+        }
+        
+        // 2. 대체 경로 1: stickyFooter
+        price = root.path("stickyFooter")
+                   .path("discount")
+                   .path("cheapestPrice")
+                   .asDouble(0);
+        
+        if (price > 0) {
+            return price;
+        }
+        
+        // 3. 대체 경로 2: searchResult
+        JsonNode searchResults = root.path("searchResult").path("searchResults");
+        if (searchResults.isArray() && searchResults.size() > 0) {
+            JsonNode firstResult = searchResults.get(0);
+            price = firstResult.path("pricing")
+                              .path("price")
+                              .asDouble(0);
+            if (price > 0) {
+                return price;
+            }
+        }
+        
+        // 4. 대체 경로 3: 문자열에서 숫자 추출
+        String priceStr = root.path("stickyFooter")
+                             .path("discount")
+                             .path("cheapestPriceWithCurrency")
+                             .asText("");
+        if (!priceStr.isEmpty()) {
+            String numericStr = priceStr.replaceAll("[^0-9.]", "");
+            if (!numericStr.isEmpty()) {
+                try {
+                    return Double.parseDouble(numericStr);
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+        
+        return 0;
     }
 
     private String extractCurrencyFromUrl(String url) {
@@ -189,8 +241,11 @@ public class ConvertController {
     }
 
     private JsonNode fetchSecondaryDataJson(String hotelPageUrl, String currency) throws Exception {
+        // **수정: 페이지 URL에 currency 파라미터 추가**
+        String pageUrl = addCurrencyToPageUrl(hotelPageUrl, currency);
+        
         // HTML 파싱 시 UTF-8 처리
-        Document doc = Jsoup.connect(hotelPageUrl)
+        Document doc = Jsoup.connect(pageUrl)
             .header("Accept-Language","ko-KR,ko;q=0.9,en;q=0.8")
             .header("User-Agent","Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
             .timeout((int)Duration.ofSeconds(15).toMillis())
@@ -211,12 +266,23 @@ public class ConvertController {
             .uri(URI.create(apiUrl))
             .header("Accept-Language","ko-KR,ko;q=0.9,en;q=0.8")
             .header("User-Agent","Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-            .header("Referer", hotelPageUrl)
+            .header("Referer", pageUrl)
             .timeout(Duration.ofSeconds(20))
             .GET()
             .build();
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         return mapper.readTree(response.body());
+    }
+
+    private String addCurrencyToPageUrl(String pageUrl, String currency) {
+        if (!pageUrl.contains("currency=" + currency)) {
+            if (pageUrl.contains("?")) {
+                pageUrl += "&currency=" + currency;
+            } else {
+                pageUrl += "?currency=" + currency;
+            }
+        }
+        return pageUrl;
     }
 
     private String addCurrencyParameter(String apiUrl, String currency) {
@@ -251,14 +317,16 @@ public class ConvertController {
         private final double price;
         private final boolean soldOut;
         private final String hotel;
+        private final String currency; // **새로 추가**
 
-        public LinkInfo(String label, int cid, String url, double price, boolean soldOut, String hotel) {
+        public LinkInfo(String label, int cid, String url, double price, boolean soldOut, String hotel, String currency) {
             this.label = label;
             this.cid = cid;
             this.url = url;
             this.price = price;
             this.soldOut = soldOut;
             this.hotel = hotel;
+            this.currency = currency;
         }
 
         public String getLabel() { return label; }
@@ -267,6 +335,7 @@ public class ConvertController {
         public double getPrice() { return price; }
         public boolean isSoldOut() { return soldOut; }
         public String getHotel() { return hotel; }
+        public String getCurrency() { return currency; } // **새로 추가**
     }
 
     public static record AffiliateLink(String label, String url) {}
