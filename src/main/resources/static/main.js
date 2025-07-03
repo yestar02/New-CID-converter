@@ -54,9 +54,12 @@ $('#frm').addEventListener('submit', async e => {
       $('#tbl tbody').appendChild(tr);
     });
 
+    // 수정된 최저가 찾기 로직
     const available = res.priced.filter(i => !i.isSoldOut && i.price > 0);
     if (available.length) {
-      const best = available[0];
+      const best = available.reduce((min, current) => 
+        current.price < min.price ? current : min
+      );
       $('#cheapest').innerHTML = `
         <td>🏆 최저가</td>
         <td>${best.price.toLocaleString()}</td>
