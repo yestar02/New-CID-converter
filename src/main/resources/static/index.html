@@ -3,78 +3,82 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>아고다 CID 변환기</title>
+    <title>아고다 CID 가격 비교</title>
     <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;700&display=swap" rel="stylesheet">
 </head>
 <body>
     <div class="container">
-        <!-- 메인 타이틀 -->
-        <h1 id="mainTitle">아고다 CID 변환기</h1>
+        <h1 id="mainTitle">아고다 CID 가격 비교</h1>
         
-        <!-- 호텔명-가격 (결과 화면에서만 표시) -->
-        <h2 id="hotelTitle" style="display: none;"></h2>
-        
-        <!-- 검색 폼 -->
         <form id="frm">
-            <input type="text" id="agodaUrl" placeholder="아고다 호텔 URL을 입력하세요" required>
+            <input type="text" id="agodaUrl" placeholder="아고다 호텔 상세 URL을 입력하세요" required>
             <button type="submit" id="convertBtn">변환!</button>
-            <button type="button" id="helpBtn" style="display: inline-block;">도움말 보기</button>
-            <button type="button" id="resetBtn" style="display: none;">초기화면으로 돌아가기</button>
+            <button type="button" id="helpBtn">도움말 보기</button>
+            <button type="button" id="resetBtn" style="display: none;">초기화면으로</button>
         </form>
-        
-        <!-- 로딩 -->
-        <div id="loading" class="loading" style="display: none;">🔍 검색 중...</div>
-        
-        <!-- 결과 테이블들 (두 단 레이아웃) -->
-        <div id="tablesContainer" class="tables-container" style="display: none;">
-            <!-- 왼쪽: CID 가격 비교 -->
+
+        <div id="loading" class="loading" style="display: none;">
+            <p>가격 정보를 수집 중입니다...</p>
+        </div>
+
+        <h2 id="hotelTitle" style="display: none;"></h2>
+
+        <!-- 최저가 표 추가 -->
+        <div id="cheapestContainer" style="display: none;">
+            <h3>🏆 최저가</h3>
+            <table id="cheapestTable">
+                <thead>
+                    <tr>
+                        <th>제휴사</th>
+                        <th>가격</th>
+                        <th>열기</th>
+                        <th>복사</th>
+                    </tr>
+                </thead>
+                <tbody id="cheapestBody"></tbody>
+            </table>
+        </div>
+
+        <div class="tables-container" id="tablesContainer" style="display: none;">
             <div class="table-wrapper">
                 <h3>CID별 가격 비교</h3>
                 <table id="tbl">
                     <thead>
                         <tr>
-                            <th>구분</th>
-                            <th>가격(₩)</th>
+                            <th>제휴사</th>
+                            <th>가격</th>
                             <th>열기</th>
                             <th>복사</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        <!-- 최저가 행 -->
-                        <tr id="cheapest" class="cheapest-row"></tr>
-                    </tbody>
+                    <tbody></tbody>
+                    <tfoot>
+                        <tr id="cheapest"></tr>
+                    </tfoot>
                 </table>
             </div>
             
-            <!-- 오른쪽: 제휴 링크 -->
             <div class="table-wrapper">
-                <h3>제휴 링크 바로가기</h3>
-                <table id="affTable">
-                    <thead>
-                        <tr>
-                            <th>구분</th>
-                            <th>링크</th>
-                        </tr>
-                    </thead>
-                    <tbody id="affList"></tbody>
-                </table>
+                <h3>제휴 링크</h3>
+                <ul id="affList"></ul>
+            </div>
+        </div>
+
+        <!-- 도움말 팝업 -->
+        <div id="helpPopup" class="popup">
+            <div class="popup-content">
+                <span class="close" id="closePopup">&times;</span>
+                <h3>사용 방법</h3>
+                <ol>
+                    <li>아고다 호텔 상세 페이지 URL을 복사하세요.</li>
+                    <li>URL에 cid 파라미터가 포함되어 있는지 확인하세요.</li>
+                    <li>입력창에 붙여넣고 '변환!' 버튼을 클릭하세요.</li>
+                    <li>다양한 제휴사별 가격을 비교해보세요.</li>
+                </ol>
             </div>
         </div>
     </div>
-    
-    <!-- 도움말 팝업 -->
-    <div id="helpPopup" class="popup">
-        <div class="popup-content">
-            <span class="close" id="closePopup">&times;</span>
-            <h3>사용법</h3>
-            <p>1. 아고다 호텔 상세 페이지 URL을 복사하세요.</p>
-            <p>2. URL에 cid 파라미터가 포함되어 있는지 확인하세요.</p>
-            <p>3. 입력창에 붙여넣고 '변환!' 버튼을 클릭하세요.</p>
-            <p>4. 다양한 제휴사별 가격을 비교해보세요.</p>
-        </div>
-    </div>
-    
+
     <script src="main.js"></script>
 </body>
 </html>

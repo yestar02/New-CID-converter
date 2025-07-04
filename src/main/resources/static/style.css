@@ -97,6 +97,29 @@ button[type="button"]:hover {
     font-size: 1.1rem;
 }
 
+/* 최저가 컨테이너 스타일 */
+#cheapestContainer {
+    margin: 20px 0;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border: 2px solid #28a745;
+    border-radius: 8px;
+}
+
+#cheapestContainer h3 {
+    color: #28a745;
+    margin-top: 0;
+}
+
+#cheapestTable {
+    background-color: white;
+}
+
+#cheapestTable th {
+    background-color: #28a745;
+    color: white;
+}
+
 /* 두 단 테이블 레이아웃 */
 .tables-container {
     display: flex;
@@ -133,6 +156,19 @@ th {
 
 tr:nth-child(even) {
     background-color: #fafafa;
+}
+
+/* 가격 배경색 스타일 */
+.price-green {
+    background-color: #dbfdc8 !important;
+}
+
+.price-yellow {
+    background-color: #fdf6c8 !important;
+}
+
+.price-red {
+    background-color: #fdc8c8 !important;
 }
 
 /* 최저가 행 스타일 */
@@ -182,6 +218,37 @@ tr:nth-child(even) {
     background-color: #218838;
 }
 
+/* 제휴 링크 스타일 */
+#affList {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+#affList li {
+    margin: 0;
+}
+
+.affiliate-btn {
+    display: block;
+    width: 100%;
+    padding: 10px;
+    background-color: #28a745;
+    color: white;
+    text-decoration: none;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.affiliate-btn:hover {
+    background-color: #218838;
+}
+
 /* 도움말 팝업 스타일 */
 .popup {
     display: none;
@@ -225,43 +292,43 @@ tr:nth-child(even) {
         padding: 20px;
         margin: 10px;
     }
-    
+
     h1 {
         font-size: 2rem;
     }
-    
+
     h2 {
         font-size: 1.4rem;
     }
-    
+
     form {
         flex-direction: column;
         gap: 10px;
     }
-    
+
     input[type="text"] {
         min-width: auto;
         width: 100%;
     }
-    
+
     button {
         width: 100%;
         max-width: 200px;
     }
-    
+
     .tables-container {
         flex-direction: column;
         gap: 30px;
     }
-    
+
     table {
         font-size: 12px;
     }
-    
+
     th, td {
         padding: 8px 4px;
     }
-    
+
     .btn-link {
         padding: 4px 8px;
         font-size: 11px;
@@ -272,11 +339,11 @@ tr:nth-child(even) {
     h1 {
         font-size: 1.5rem;
     }
-    
+
     h2 {
         font-size: 1.2rem;
     }
-    
+
     .container {
         padding: 15px;
     }
