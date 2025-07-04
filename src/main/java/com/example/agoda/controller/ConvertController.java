@@ -94,14 +94,37 @@ public class ConvertController {
         System.out.println("=== 프로그램 세션으로 쿠키 수집 ===");
         Map<String, String> sessionCookies = null;
         try {
+            // 더 완전한 브라우저 헤더로 봇 탐지 우회
             Connection.Response response = Jsoup.connect(url)
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+                .header("Accept-Encoding", "gzip, deflate, br, zstd")
                 .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
-                .header("ag-language-locale", "ko-kr")
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                .timeout((int) Duration.ofSeconds(15).toMillis())
+                .header("Cache-Control", "max-age=0")
+                .header("sec-ch-ua", "\"Not)A;Brand\";v=\"8\", \"Chromium\";v=\"138\", \"Google Chrome\";v=\"138\"")
+                .header("sec-ch-ua-mobile", "?0")
+                .header("sec-ch-ua-platform", "\"Windows\"")
+                .header("sec-fetch-dest", "document")
+                .header("sec-fetch-mode", "navigate")
+                .header("sec-fetch-site", "none")
+                .header("sec-fetch-user", "?1")
+                .header("upgrade-insecure-requests", "1")
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36")
+                .timeout(30000)  // 30초로 타임아웃 증가
+                .ignoreHttpErrors(true)  // HTTP 오류 무시
+                .followRedirects(true)   // 리디렉션 따라가기
                 .execute();
 
+            // 404 응답 확인
+            if (response.statusCode() == 404 || response.url().toString().contains("pagenotfound")) {
+                throw new Exception("URL이 유효하지 않거나 접근이 차단되었습니다. URL을 확인해주세요.");
+            }
+
             sessionCookies = new HashMap<>(response.cookies());
+            
+            // 쿠키가 없으면 오류
+            if (sessionCookies.isEmpty()) {
+                throw new Exception("세션 쿠키를 받지 못했습니다.");
+            }
             
             // 통화 관련 쿠키를 KRW로 강제 수정
             if (sessionCookies.containsKey("agoda.version.03")) {
@@ -120,11 +143,12 @@ public class ConvertController {
             sessionCookies.put("agoda.price.01", "PriceView=2");
             
             System.out.printf("세션 쿠키 수집 완료: %d개%n", sessionCookies.size());
+            System.out.printf("최종 응답 URL: %s%n", response.url().toString());
             
         } catch (Exception e) {
             System.out.println("세션 쿠키 수집 실패: " + e.getMessage());
             return ResponseEntity.badRequest()
-                .body(Map.of("success", false, "message", "세션 쿠키 수집에 실패했습니다."));
+                .body(Map.of("success", false, "message", "URL에 접근할 수 없습니다: " + e.getMessage()));
         }
 
         // 2) 세션 쿠키로 초기 호텔명과 가격 가져오기
