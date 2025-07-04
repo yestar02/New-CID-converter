@@ -2,22 +2,38 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;700&display=swap');
 
-/* 기본 스타일 */
+/* 기본 스타일 - 초기 화면 중앙 정렬 */
 body {
     font-family: 'Noto Sans KR', sans-serif;
     background-color: #f8f9fa;
     margin: 0;
     padding: 20px;
     text-align: center;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* 초기 상태에서 중앙 정렬, 결과 화면에서는 상단 정렬 */
+body.has-results {
+    align-items: flex-start;
+    padding-top: 20px;
 }
 
 .container {
     max-width: 1200px;
-    margin: 0 auto;
+    width: 100%;
     background: #fff;
     padding: 30px;
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    transition: all 0.3s ease;
+}
+
+/* 초기 상태에서는 더 작은 너비 */
+body:not(.has-results) .container {
+    max-width: 600px;
 }
 
 /* 타이틀 스타일 */
@@ -90,7 +106,7 @@ button[type="button"]:hover {
     background-color: #545b62;
 }
 
-/* 로딩 및 진행율 스타일 */
+/* 로딩 및 진행율 스타일 - shimmer 효과 개선 */
 .loading {
     margin: 20px 0;
     padding: 30px;
@@ -136,6 +152,7 @@ button[type="button"]:hover {
     position: relative;
 }
 
+/* 개선된 shimmer 효과 - 더 자연스럽게 */
 .progress-fill::after {
     content: '';
     position: absolute;
@@ -145,21 +162,35 @@ button[type="button"]:hover {
     bottom: 0;
     background: linear-gradient(
         90deg,
-        rgba(255,255,255,0.3) 0%,
-        rgba(255,255,255,0) 50%,
-        rgba(255,255,255,0.3) 100%
+        rgba(255,255,255,0) 0%,
+        rgba(255,255,255,0.1) 40%,
+        rgba(255,255,255,0.15) 50%,
+        rgba(255,255,255,0.1) 60%,
+        rgba(255,255,255,0) 100%
     );
-    animation: shimmer 2s infinite;
+    animation: shimmer 3s infinite ease-in-out;
 }
 
 @keyframes shimmer {
-    0% { transform: translateX(-100%); }
-    100% { transform: translateX(100%); }
+    0% { 
+        transform: translateX(-100%);
+        opacity: 0;
+    }
+    10% {
+        opacity: 1;
+    }
+    90% {
+        opacity: 1;
+    }
+    100% { 
+        transform: translateX(300%);
+        opacity: 0;
+    }
 }
 
 .progress-text {
     display: flex;
-    justify-content: space-between;
+    justify-content: center;
     align-items: center;
     margin-top: 8px;
     font-size: 14px;
@@ -169,10 +200,6 @@ button[type="button"]:hover {
 #progressPercent {
     font-weight: 600;
     color: #4285f4;
-}
-
-#progressStatus {
-    font-style: italic;
 }
 
 /* 최저가 컨테이너 스타일 */
@@ -217,6 +244,7 @@ table {
     border-collapse: collapse;
     margin-top: 10px;
     font-size: 14px;
+    table-layout: fixed; /* 테이블 너비 고정 */
 }
 
 th, td {
@@ -225,6 +253,12 @@ th, td {
     text-align: center;
     word-break: break-word;
 }
+
+/* 테이블 컬럼 너비 고정 */
+th:nth-child(1), td:nth-child(1) { width: 35%; } /* 제휴사 */
+th:nth-child(2), td:nth-child(2) { width: 30%; } /* 가격 */
+th:nth-child(3), td:nth-child(3) { width: 17.5%; } /* 열기 */
+th:nth-child(4), td:nth-child(4) { width: 17.5%; } /* 복사 */
 
 th {
     background-color: #4285f4;
@@ -269,7 +303,7 @@ tr:nth-child(even) {
     padding: 15px;
 }
 
-/* 버튼 링크 스타일 */
+/* 버튼 링크 스타일 - 너비 고정 */
 .btn-link {
     display: inline-block;
     padding: 6px 12px;
@@ -282,6 +316,8 @@ tr:nth-child(even) {
     border: none;
     cursor: pointer;
     font-family: inherit;
+    min-width: 50px; /* 최소 너비 고정 */
+    box-sizing: border-box;
 }
 
 .btn-link:hover {
@@ -290,23 +326,26 @@ tr:nth-child(even) {
 
 .btn-copy {
     background-color: #28a745;
+    min-width: 60px; /* 복사 버튼은 조금 더 넓게 */
 }
 
 .btn-copy:hover {
     background-color: #218838;
 }
 
-/* 제휴 링크 스타일 */
+/* 제휴 링크 스타일 - 모바일 최적화 */
 #affList {
     list-style: none;
     padding: 0;
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: 1fr;
     gap: 10px;
+    width: 100%;
 }
 
 #affList li {
     margin: 0;
+    width: 100%;
 }
 
 .affiliate-btn {
@@ -321,6 +360,8 @@ tr:nth-child(even) {
     border: none;
     cursor: pointer;
     font-family: inherit;
+    box-sizing: border-box;
+    text-align: center;
 }
 
 .affiliate-btn:hover {
@@ -366,9 +407,17 @@ tr:nth-child(even) {
 
 /* 모바일 최적화 */
 @media (max-width: 768px) {
+    body {
+        padding: 10px;
+    }
+
     .container {
         padding: 20px;
-        margin: 10px;
+    }
+
+    /* 초기 상태에서도 모바일에서는 최대 너비 사용 */
+    body:not(.has-results) .container {
+        max-width: 100%;
     }
 
     h1 {
@@ -410,10 +459,26 @@ tr:nth-child(even) {
     .btn-link {
         padding: 4px 8px;
         font-size: 11px;
+        min-width: 45px;
+    }
+
+    .btn-copy {
+        min-width: 50px;
     }
 
     .progress-container {
         max-width: 300px;
+    }
+
+    /* 모바일에서 제휴 링크 2열로 배치 */
+    #affList {
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+    }
+
+    .affiliate-btn {
+        padding: 8px 4px;
+        font-size: 13px;
     }
 }
 
@@ -428,5 +493,34 @@ tr:nth-child(even) {
 
     .container {
         padding: 15px;
+    }
+
+    /* 작은 화면에서는 제휴 링크 1열로 */
+    #affList {
+        grid-template-columns: 1fr;
+    }
+
+    .affiliate-btn {
+        padding: 10px 8px;
+        font-size: 14px;
+    }
+
+    /* 테이블 컬럼 너비 조정 */
+    th:nth-child(1), td:nth-child(1) { width: 40%; } /* 제휴사 */
+    th:nth-child(2), td:nth-child(2) { width: 25%; } /* 가격 */
+    th:nth-child(3), td:nth-child(3) { width: 17.5%; } /* 열기 */
+    th:nth-child(4), td:nth-child(4) { width: 17.5%; } /* 복사 */
+}
+
+/* 매우 작은 화면 (320px 이하) */
+@media (max-width: 320px) {
+    .btn-link {
+        padding: 3px 6px;
+        font-size: 10px;
+        min-width: 40px;
+    }
+
+    .btn-copy {
+        min-width: 45px;
     }
 }

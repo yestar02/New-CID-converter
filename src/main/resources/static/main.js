@@ -54,6 +54,9 @@ function resetToInitial() {
         currentEventSource = null;
     }
     
+    // body 클래스 제거하여 초기 중앙 정렬로 복귀
+    document.body.classList.remove('has-results');
+    
     elements.helpBtn.style.display = 'inline-block';
     elements.resetBtn.style.display = 'none';
     elements.hotelTitle.style.display = 'none';
@@ -69,6 +72,9 @@ function resetToInitial() {
 
 // 결과 화면으로 전환
 function showResults() {
+    // body 클래스 추가하여 상단 정렬로 변경
+    document.body.classList.add('has-results');
+    
     elements.helpBtn.style.display = 'none';
     elements.resetBtn.style.display = 'inline-block';
     elements.hotelTitle.style.display = 'block';
