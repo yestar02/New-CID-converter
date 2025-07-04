@@ -206,7 +206,7 @@ public class ConvertController {
         // HTML 파싱 시 UTF-8 처리 + Python requests와 동일한 언어 헤더 추가
         Document doc = Jsoup.connect(hotelPageUrl)
             .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
-            .header("ag-language-locale", "ko-kr") // ← Python과 동일하게 추가
+            .header("ag-language-locale", "ko-kr")
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
             .timeout((int) Duration.ofSeconds(15).toMillis())
             .get();
@@ -226,12 +226,21 @@ public class ConvertController {
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(apiUrl))
             .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
-            .header("ag-language-locale", "ko-kr") // ← Python과 동일하게 추가
+            .header("ag-language-locale", "ko-kr")
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
             .header("Referer", hotelPageUrl)
             .timeout(Duration.ofSeconds(20))
             .GET()
             .build();
+
+        // 요청 헤더 전체 출력
+        System.out.printf("[%s] === Request Headers ===\n", debugLabel);
+        request.headers().map().forEach((key, values) -> {
+            for (String value : values) {
+                System.out.printf("[%s] %s: %s\n", debugLabel, key, value);
+            }
+        });
+        System.out.printf("[%s] === End of Headers ===\n", debugLabel);
 
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         return mapper.readTree(response.body());
