@@ -109,7 +109,7 @@ public class ConvertController {
                 .header("sec-fetch-user", "?1")
                 .header("upgrade-insecure-requests", "1")
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36")
-                .timeout(10000)  // 30초로 타임아웃 증가
+                .timeout(5000)  // 5초로 타임아웃 증가
                 .ignoreHttpErrors(true)  // HTTP 오류 무시
                 .followRedirects(true)   // 리디렉션 따라가기
                 .execute();
