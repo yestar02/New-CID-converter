@@ -90,7 +90,44 @@ public class ConvertController {
 
         String currency = extractCurrencyFromUrl(url);
 
-        // 1) 먼저 초기 호텔명과 가격 가져오기
+        // 1) 프로그램 세션으로 한 번 접속하여 쿠키 수집 및 수정
+        System.out.println("=== 프로그램 세션으로 쿠키 수집 ===");
+        Map<String, String> sessionCookies = null;
+        try {
+            Connection.Response response = Jsoup.connect(url)
+                .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
+                .header("ag-language-locale", "ko-kr")
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .timeout((int) Duration.ofSeconds(15).toMillis())
+                .execute();
+
+            sessionCookies = new HashMap<>(response.cookies());
+            
+            // 통화 관련 쿠키를 KRW로 강제 수정
+            if (sessionCookies.containsKey("agoda.version.03")) {
+                String versionCookie = sessionCookies.get("agoda.version.03");
+                String originalCurrency = versionCookie.contains("CurLabel=") 
+                    ? versionCookie.split("CurLabel=")[1].split("&")[0] 
+                    : "UNKNOWN";
+                    
+                versionCookie = versionCookie.replaceAll("CurLabel=\\w+", "CurLabel=KRW");
+                sessionCookies.put("agoda.version.03", versionCookie);
+                
+                System.out.printf("통화 쿠키 수정: %s → KRW%n", originalCurrency);
+            }
+            
+            // 가격뷰 쿠키 강제 설정
+            sessionCookies.put("agoda.price.01", "PriceView=2");
+            
+            System.out.printf("세션 쿠키 수집 완료: %d개%n", sessionCookies.size());
+            
+        } catch (Exception e) {
+            System.out.println("세션 쿠키 수집 실패: " + e.getMessage());
+            return ResponseEntity.badRequest()
+                .body(Map.of("success", false, "message", "세션 쿠키 수집에 실패했습니다."));
+        }
+
+        // 2) 세션 쿠키로 초기 호텔명과 가격 가져오기
         System.out.println("=== 원본 주소에서 호텔명과 가격 가져오기 ===");
         String initialHotel = "호텔명 없음";
         double initialPrice = 0;
@@ -98,7 +135,7 @@ public class ConvertController {
         int maxAttempts = 3;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
-                JsonNode initialRoot = fetchSecondaryDataJson(url, currency, "INITIAL");
+                JsonNode initialRoot = fetchSecondaryDataJsonWithSession(url, currency, "INITIAL", sessionCookies);
                 initialHotel = initialRoot.path("hotelInfo").path("name").asText("호텔명 없음");
                 initialPrice = initialRoot.path("mosaicInitData")
                                           .path("discount")
@@ -121,17 +158,17 @@ public class ConvertController {
             }
         }
 
-        // 2) CID별 가격 수집
+        // 3) 동일한 세션으로 CID별 가격 수집
         List<CidEntry> cidList = buildCidList();
         List<LinkInfo> results = new ArrayList<>();
 
-        System.out.println("\n=== CID별 가격 수집 시작 ===");
+        System.out.println("\n=== 동일한 세션으로 CID별 가격 수집 시작 ===");
         System.out.println("총 " + cidList.size() + "개 CID로 순차적 가격 수집 시작...");
 
         for (int i = 0; i < cidList.size(); i++) {
             CidEntry entry = cidList.get(i);
             System.out.printf("(%d/%d) %s 처리 중...%n", i + 1, cidList.size(), entry.label());
-            results.add(fetchSequentially(url, entry));
+            results.add(fetchSequentiallyWithSession(url, entry, sessionCookies));
         }
         System.out.println("모든 CID 가격 수집 완료!");
 
@@ -160,14 +197,14 @@ public class ConvertController {
         return ResponseEntity.ok(resp);
     }
 
-    private LinkInfo fetchSequentially(String baseUrl, CidEntry entry) {
+    private LinkInfo fetchSequentiallyWithSession(String baseUrl, CidEntry entry, Map<String, String> sessionCookies) {
         String modUrl = baseUrl.replaceAll("cid=-?\\d+", "cid=" + entry.cid());
         String currency = extractCurrencyFromUrl(baseUrl);
 
         int maxAttempts = 3;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
-                JsonNode root = fetchSecondaryDataJson(modUrl, currency, entry.label());
+                JsonNode root = fetchSecondaryDataJsonWithSession(modUrl, currency, entry.label(), sessionCookies);
 
                 String hotel = root.path("hotelInfo").path("name").asText(null);
                 double price = root.path("mosaicInitData")
@@ -204,23 +241,15 @@ public class ConvertController {
         return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
     }
 
-    private JsonNode fetchSecondaryDataJson(String hotelPageUrl, String currency, String debugLabel) throws Exception {
-        // 1단계: 페이지 접속하여 쿠키 수집
-        Connection.Response response = Jsoup.connect(hotelPageUrl)
+    private JsonNode fetchSecondaryDataJsonWithSession(String hotelPageUrl, String currency, String debugLabel, Map<String, String> sessionCookies) throws Exception {
+        // Jsoup으로 HTML 파싱하되, 세션 쿠키는 이미 있으므로 API URL만 추출
+        Document doc = Jsoup.connect(hotelPageUrl)
+            .cookies(sessionCookies)  // 기존 세션 쿠키 사용
             .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
             .header("ag-language-locale", "ko-kr")
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
             .timeout((int) Duration.ofSeconds(15).toMillis())
-            .execute();
-
-        // 받은 쿠키들을 추출
-        Map<String, String> cookies = response.cookies();
-        Document doc = response.parse();
-
-        System.out.printf("[%s] 수집된 쿠키: %s%n", debugLabel, 
-            cookies.entrySet().stream()
-                .map(e -> e.getKey() + "=" + e.getValue())
-                .collect(Collectors.joining("; ")));
+            .get();
 
         Element script = doc.selectFirst("script[data-selenium=script-initparam]");
         String content = script != null
@@ -234,17 +263,20 @@ public class ConvertController {
         // API 요청 URL 출력 (디버깅용)
         System.out.printf("[%s] API Request URL: %s%n", debugLabel, apiUrl);
 
-        // 2단계: 수집한 쿠키를 포함하여 API 요청
-        String cookieHeader = cookies.entrySet().stream()
+        // 세션 쿠키를 사용하여 API 요청
+        String cookieHeader = sessionCookies.entrySet().stream()
             .map(entry -> entry.getKey() + "=" + entry.getValue())
             .collect(Collectors.joining("; "));
+
+        System.out.printf("[%s] 사용할 세션 쿠키: %s%n", debugLabel, 
+            cookieHeader.length() > 200 ? cookieHeader.substring(0, 200) + "..." : cookieHeader);
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(apiUrl))
             .header("Accept", "*/*")
             .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
             .header("ag-language-locale", "ko-kr")
-            .header("Cookie", cookieHeader)  // 실제 수집한 쿠키 사용
+            .header("Cookie", cookieHeader)  // 세션 쿠키 사용
             .header("cr-currency-code", "KRW")
             .header("cr-currency-id", "26")
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
@@ -253,14 +285,16 @@ public class ConvertController {
             .GET()
             .build();
 
-        // 요청 헤더 전체 출력
-        System.out.printf("[%s] === Request Headers ===\n", debugLabel);
-        request.headers().map().forEach((key, values) -> {
-            for (String value : values) {
-                System.out.printf("[%s] %s: %s\n", debugLabel, key, value);
-            }
-        });
-        System.out.printf("[%s] === End of Headers ===\n", debugLabel);
+        // 요청 헤더 전체 출력 (첫 번째 요청만)
+        if ("INITIAL".equals(debugLabel)) {
+            System.out.printf("[%s] === Request Headers ===\n", debugLabel);
+            request.headers().map().forEach((key, values) -> {
+                for (String value : values) {
+                    System.out.printf("[%s] %s: %s\n", debugLabel, key, value);
+                }
+            });
+            System.out.printf("[%s] === End of Headers ===\n", debugLabel);
+        }
 
         HttpResponse<String> apiResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         return mapper.readTree(apiResponse.body());
