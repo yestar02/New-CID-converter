@@ -142,9 +142,12 @@ public class ConvertController {
             }
 
             // 3) 병렬 CID별 가격 수집
-            List<LinkInfo> results = new ArrayList<>(); // 동기화 불필요 (마지막에 한번에 추가)
+            List<LinkInfo> results = new ArrayList<>();
             ExecutorService cidExecutor = Executors.newFixedThreadPool(8);
             AtomicInteger completedCount = new AtomicInteger(0);
+            
+            // currentStep을 final로 만들기 위해 별도 변수 사용
+            final int finalCurrentStep = currentStep;
 
             try {
                 List<CompletableFuture<LinkInfo>> futures = cidList.stream()
@@ -152,9 +155,9 @@ public class ConvertController {
                         try {
                             LinkInfo result = fetchSequentiallyWithSession(url, entry, sessionCookies);
 
-                            // 진행율 업데이트 (동기화)
+                            // 진행율 업데이트 (동기화) - finalCurrentStep 사용
                             int completed = completedCount.incrementAndGet();
-                            sendProgress(sessionId, currentStep + completed, totalSteps);
+                            sendProgress(sessionId, finalCurrentStep + completed, totalSteps);
 
                             return result;
                         } catch (Exception e) {
@@ -202,7 +205,7 @@ public class ConvertController {
             resp.put("hotel", hotelName);
             resp.put("initialPrice", initialPrice);
             resp.put("initialCurrency", initialCurrency);
-            resp.put("priced", results); // 이제 고정 순서로 정렬된 결과
+            resp.put("priced", results);
             resp.put("cheapest", cheapest);
             resp.put("affiliateLinks", AFFILIATES);
             resp.put("totalCids", cidList.size());
