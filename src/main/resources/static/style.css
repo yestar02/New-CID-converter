@@ -90,11 +90,89 @@ button[type="button"]:hover {
     background-color: #545b62;
 }
 
-/* 로딩 스타일 */
+/* 로딩 및 진행율 스타일 */
 .loading {
     margin: 20px 0;
+    padding: 30px;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    border: 1px solid #dee2e6;
+}
+
+.loading-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+}
+
+.loading-content p {
+    margin: 0;
     color: #555;
     font-size: 1.1rem;
+    font-weight: 500;
+}
+
+.progress-container {
+    width: 100%;
+    max-width: 400px;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 24px;
+    background-color: #e9ecef;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #4285f4 0%, #34a853 50%, #fbbc05 100%);
+    width: 0%;
+    transition: width 0.3s ease;
+    border-radius: 12px;
+    position: relative;
+}
+
+.progress-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(
+        90deg,
+        rgba(255,255,255,0.3) 0%,
+        rgba(255,255,255,0) 50%,
+        rgba(255,255,255,0.3) 100%
+    );
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+.progress-text {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 8px;
+    font-size: 14px;
+    color: #666;
+}
+
+#progressPercent {
+    font-weight: 600;
+    color: #4285f4;
+}
+
+#progressStatus {
+    font-style: italic;
 }
 
 /* 최저가 컨테이너 스타일 */
@@ -332,6 +410,10 @@ tr:nth-child(even) {
     .btn-link {
         padding: 4px 8px;
         font-size: 11px;
+    }
+
+    .progress-container {
+        max-width: 300px;
     }
 }
 

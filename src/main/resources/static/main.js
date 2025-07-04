@@ -29,11 +29,31 @@ const elements = {
     cheapestBody: $('#cheapestBody'),
     affList: $('#affList'),
     helpPopup: $('#helpPopup'),
-    closePopup: $('#closePopup')
+    closePopup: $('#closePopup'),
+    progressFill: $('#progressFill'),
+    progressPercent: $('#progressPercent')
 };
+
+let currentEventSource = null;
+
+// 세션 ID 생성
+function generateSessionId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2);
+}
+
+// 진행율 업데이트
+function updateProgress(percentage) {
+    elements.progressFill.style.width = percentage + '%';
+    elements.progressPercent.textContent = percentage + '%';
+}
 
 // 초기 상태로 리셋
 function resetToInitial() {
+    if (currentEventSource) {
+        currentEventSource.close();
+        currentEventSource = null;
+    }
+    
     elements.helpBtn.style.display = 'inline-block';
     elements.resetBtn.style.display = 'none';
     elements.hotelTitle.style.display = 'none';
@@ -44,6 +64,7 @@ function resetToInitial() {
     elements.cheapest.innerHTML = '';
     elements.cheapestBody.innerHTML = '';
     elements.affList.innerHTML = '';
+    updateProgress(0);
 }
 
 // 결과 화면으로 전환
@@ -73,93 +94,138 @@ elements.form.addEventListener('submit', async e => {
     const url = elements.urlInput.value.trim();
     if (!url) return alert('URL을 입력하세요.');
 
+    const sessionId = generateSessionId();
+    
     elements.loading.style.display = 'block';
     elements.tablesContainer.style.display = 'none';
     elements.hotelTitle.style.display = 'none';
     elements.cheapestContainer.style.display = 'none';
+    updateProgress(0);
+
+    // SSE 연결 설정
+    currentEventSource = new EventSource(`/api/progress/${sessionId}`);
+    
+    currentEventSource.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'progress') {
+            updateProgress(data.percentage);
+        } else if (data.type === 'complete') {
+            handleCompletionData(data.result);
+            currentEventSource.close();
+            currentEventSource = null;
+        } else if (data.type === 'error') {
+            alert(data.message);
+            elements.loading.style.display = 'none';
+            currentEventSource.close();
+            currentEventSource = null;
+        }
+    };
+
+    currentEventSource.onerror = function() {
+        alert('서버 연결에 오류가 발생했습니다.');
+        elements.loading.style.display = 'none';
+        if (currentEventSource) {
+            currentEventSource.close();
+            currentEventSource = null;
+        }
+    };
 
     try {
-        const res = await fetch('/api/convert', {
+        // 백엔드에 처리 요청
+        const response = await fetch('/api/convert', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url })
-        }).then(r => r.json());
+            body: JSON.stringify({ url, sessionId })
+        });
 
-        if (res.success === false) {
-            alert(res.message);
-            return;
-        }
-
-        // 호텔명과 가격 표시
-        const hotelName = res.hotel;
-        const initialPriceValue = res.initialPrice;
-        const priceText = initialPriceValue > 0 
-            ? initialPriceValue.toLocaleString() + '원' 
-            : '가격 정보 없음';
-        elements.hotelTitle.textContent = `${hotelName} - ${priceText}`;
-
-        // 가격 배경색을 위한 유효한 가격 배열 생성
-        const validPrices = res.priced
-            .filter(item => !item.soldOut && item.price > 0)
-            .map(item => item.price);
-
-        // 최저가 표 생성
-        const availableItems = res.priced.filter(item => !item.soldOut && item.price > 0);
-        if (availableItems.length > 0) {
-            const cheapestItem = availableItems.reduce((min, current) => 
-                current.price < min.price ? current : min
-            );
-            
-            elements.cheapestContainer.style.display = 'block';
-            elements.cheapestBody.innerHTML = `
-                <tr>
-                    <td>🏆 ${cheapestItem.label}</td>
-                    <td>₩${cheapestItem.price.toLocaleString()}</td>
-                    <td><button class="btn-link" onclick="window.open('${cheapestItem.url}', '_blank')">열기</button></td>
-                    <td><button class="btn-link btn-copy" onclick="copyUrl('${cheapestItem.url}', this)">복사</button></td>
-                </tr>
-            `;
-        }
-
-        // CID별 가격 테이블 생성
-        elements.tableBody.innerHTML = '';
-        res.priced.forEach(item => {
-            const tr = document.createElement('tr');
-            const priceDisplay = item.soldOut ? '매진' : '₩' + item.price.toLocaleString();
-            const priceClass = item.soldOut ? 'sold-out' : '';
-            
-            // 가격 배경색 적용
-            let bgColorClass = '';
-            if (!item.soldOut && item.price > 0) {
-                bgColorClass = getPriceBackgroundColor(item.price, validPrices);
+        const result = await response.json();
+        if (!result.success) {
+            alert(result.message);
+            elements.loading.style.display = 'none';
+            if (currentEventSource) {
+                currentEventSource.close();
+                currentEventSource = null;
             }
-            
-            tr.innerHTML = `
-                <td>${item.label}</td>
-                <td class="${priceClass} ${bgColorClass}">${priceDisplay}</td>
-                <td><button class="btn-link" onclick="window.open('${item.url}', '_blank')">열기</button></td>
-                <td><button class="btn-link btn-copy" onclick="copyUrl('${item.url}', this)">복사</button></td>
-            `;
-            elements.tableBody.appendChild(tr);
-        });
-
-        // 제휴 링크 생성
-        elements.affList.innerHTML = '';
-        res.affiliateLinks.forEach(link => {
-            const li = document.createElement('li');
-            li.innerHTML = `<button class="affiliate-btn" onclick="window.open('${link.url}', '_blank')">${link.label}</button>`;
-            elements.affList.appendChild(li);
-        });
-
-        showResults();
-
+        }
+        
     } catch (err) {
         console.error(err);
-        alert('오류가 발생했습니다.');
-    } finally {
+        alert('요청 처리 중 오류가 발생했습니다.');
         elements.loading.style.display = 'none';
+        if (currentEventSource) {
+            currentEventSource.close();
+            currentEventSource = null;
+        }
     }
 });
+
+// 완료 데이터 처리
+function handleCompletionData(res) {
+    // 호텔명과 가격 표시
+    const hotelName = res.hotel;
+    const initialPriceValue = res.initialPrice;
+    const priceText = initialPriceValue > 0 
+        ? initialPriceValue.toLocaleString() + '원' 
+        : '가격 정보 없음';
+    elements.hotelTitle.textContent = `${hotelName} - ${priceText}`;
+
+    // 가격 배경색을 위한 유효한 가격 배열 생성
+    const validPrices = res.priced
+        .filter(item => !item.soldOut && item.price > 0)
+        .map(item => item.price);
+
+    // 최저가 표 생성
+    const availableItems = res.priced.filter(item => !item.soldOut && item.price > 0);
+    if (availableItems.length > 0) {
+        const cheapestItem = availableItems.reduce((min, current) => 
+            current.price < min.price ? current : min
+        );
+        
+        elements.cheapestContainer.style.display = 'block';
+        elements.cheapestBody.innerHTML = `
+            <tr>
+                <td>🏆 ${cheapestItem.label}</td>
+                <td>₩${cheapestItem.price.toLocaleString()}</td>
+                <td><button class="btn-link" onclick="window.open('${cheapestItem.url}', '_blank')">열기</button></td>
+                <td><button class="btn-link btn-copy" onclick="copyUrl('${cheapestItem.url}', this)">복사</button></td>
+            </tr>
+        `;
+    }
+
+    // CID별 가격 테이블 생성
+    elements.tableBody.innerHTML = '';
+    res.priced.forEach(item => {
+        const tr = document.createElement('tr');
+        const priceDisplay = item.soldOut ? '매진' : '₩' + item.price.toLocaleString();
+        const priceClass = item.soldOut ? 'sold-out' : '';
+        
+        // 가격 배경색 적용
+        let bgColorClass = '';
+        if (!item.soldOut && item.price > 0) {
+            bgColorClass = getPriceBackgroundColor(item.price, validPrices);
+        }
+        
+        tr.innerHTML = `
+            <td>${item.label}</td>
+            <td class="${priceClass} ${bgColorClass}">${priceDisplay}</td>
+            <td><button class="btn-link" onclick="window.open('${item.url}', '_blank')">열기</button></td>
+            <td><button class="btn-link btn-copy" onclick="copyUrl('${item.url}', this)">복사</button></td>
+        `;
+        elements.tableBody.appendChild(tr);
+    });
+
+    // 제휴 링크 생성
+    elements.affList.innerHTML = '';
+    res.affiliateLinks.forEach(link => {
+        const li = document.createElement('li');
+        li.innerHTML = `<button class="affiliate-btn" onclick="window.open('${link.url}', '_blank')">${link.label}</button>`;
+        elements.affList.appendChild(li);
+    });
+
+    showResults();
+    elements.loading.style.display = 'none';
+}
 
 // URL 복사 함수
 function copyUrl(url, button) {

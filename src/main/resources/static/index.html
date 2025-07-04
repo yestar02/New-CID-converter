@@ -17,13 +17,24 @@
             <button type="button" id="resetBtn" style="display: none;">초기화면으로</button>
         </form>
 
+        <!-- 진행율만 표시하는 간단한 로딩 화면 -->
         <div id="loading" class="loading" style="display: none;">
-            <p>가격 정보를 수집 중입니다...</p>
+            <div class="loading-content">
+                <p>가격 정보를 수집 중입니다...</p>
+                <div class="progress-container">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <div class="progress-text">
+                        <span id="progressPercent">0%</span>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <h2 id="hotelTitle" style="display: none;"></h2>
 
-        <!-- 최저가 표 추가 -->
+        <!-- 최저가 표 -->
         <div id="cheapestContainer" style="display: none;">
             <h3>🏆 최저가</h3>
             <table id="cheapestTable">
