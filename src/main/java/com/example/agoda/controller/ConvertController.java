@@ -2,6 +2,7 @@ package com.example.agoda.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.jsoup.Connection;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
@@ -14,6 +15,7 @@ import java.net.http.*;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api")
@@ -203,13 +205,22 @@ public class ConvertController {
     }
 
     private JsonNode fetchSecondaryDataJson(String hotelPageUrl, String currency, String debugLabel) throws Exception {
-        // HTML 파싱 시 UTF-8 처리 + Python requests와 동일한 언어 헤더 추가
-        Document doc = Jsoup.connect(hotelPageUrl)
+        // 1단계: 페이지 접속하여 쿠키 수집
+        Connection.Response response = Jsoup.connect(hotelPageUrl)
             .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
             .header("ag-language-locale", "ko-kr")
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
             .timeout((int) Duration.ofSeconds(15).toMillis())
-            .get();
+            .execute();
+
+        // 받은 쿠키들을 추출
+        Map<String, String> cookies = response.cookies();
+        Document doc = response.parse();
+
+        System.out.printf("[%s] 수집된 쿠키: %s%n", debugLabel, 
+            cookies.entrySet().stream()
+                .map(e -> e.getKey() + "=" + e.getValue())
+                .collect(Collectors.joining("; ")));
 
         Element script = doc.selectFirst("script[data-selenium=script-initparam]");
         String content = script != null
@@ -223,12 +234,19 @@ public class ConvertController {
         // API 요청 URL 출력 (디버깅용)
         System.out.printf("[%s] API Request URL: %s%n", debugLabel, apiUrl);
 
+        // 2단계: 수집한 쿠키를 포함하여 API 요청
+        String cookieHeader = cookies.entrySet().stream()
+            .map(entry -> entry.getKey() + "=" + entry.getValue())
+            .collect(Collectors.joining("; "));
+
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(apiUrl))
+            .header("Accept", "*/*")
             .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
             .header("ag-language-locale", "ko-kr")
-            .header("cr-currency-code", "KRW")  // currency 헤더만 추가
-            .header("cr-currency-id", "26")     // currency 헤더만 추가
+            .header("Cookie", cookieHeader)  // 실제 수집한 쿠키 사용
+            .header("cr-currency-code", "KRW")
+            .header("cr-currency-id", "26")
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
             .header("Referer", hotelPageUrl)
             .timeout(Duration.ofSeconds(20))
@@ -244,8 +262,8 @@ public class ConvertController {
         });
         System.out.printf("[%s] === End of Headers ===\n", debugLabel);
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        return mapper.readTree(response.body());
+        HttpResponse<String> apiResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        return mapper.readTree(apiResponse.body());
     }
 
     private String extractCurrencyFromUrl(String url) {
