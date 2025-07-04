@@ -6,18 +6,57 @@ if (typeof DisableDevtool !== 'undefined') {
 }
 
 const $ = selector => document.querySelector(selector);
-const copy = text => navigator.clipboard.writeText(text);
+const $$ = selector => document.querySelectorAll(selector);
+const copy = text => navigator.clipboard.writeText(text).then(() => alert('복사되었습니다!'));
 
-$('#frm').addEventListener('submit', async e => {
+// DOM 요소들
+const elements = {
+  form: $('#frm'),
+  urlInput: $('#agodaUrl'),
+  convertBtn: $('#convertBtn'),
+  helpBtn: $('#helpBtn'),
+  resetBtn: $('#resetBtn'),
+  loading: $('#loading'),
+  mainTitle: $('#mainTitle'),
+  hotelTitle: $('#hotelTitle'),
+  tablesContainer: $('#tablesContainer'),
+  table: $('#tbl'),
+  tableBody: $('#tbl tbody'),
+  cheapest: $('#cheapest'),
+  affList: $('#affList'),
+  helpPopup: $('#helpPopup'),
+  closePopup: $('#closePopup')
+};
+
+// 초기 상태로 리셋
+function resetToInitial() {
+  elements.helpBtn.style.display = 'inline-block';
+  elements.resetBtn.style.display = 'none';
+  elements.hotelTitle.style.display = 'none';
+  elements.tablesContainer.style.display = 'none';
+  elements.urlInput.value = '';
+  elements.tableBody.innerHTML = '';
+  elements.cheapest.innerHTML = '';
+  elements.affList.innerHTML = '';
+}
+
+// 결과 화면으로 전환
+function showResults() {
+  elements.helpBtn.style.display = 'none';
+  elements.resetBtn.style.display = 'inline-block';
+  elements.hotelTitle.style.display = 'block';
+  elements.tablesContainer.style.display = 'flex';
+}
+
+// 폼 제출 이벤트
+elements.form.addEventListener('submit', async e => {
   e.preventDefault();
-  const url = $('#agodaUrl').value.trim();
+  const url = elements.urlInput.value.trim();
   if (!url) return alert('URL을 입력하세요.');
 
-  $('#loading').style.display = 'block';
-  ['#hotelTitle', '#tbl', '#aff'].forEach(sel => $(sel).style.display = 'none');
-  $('#tbl tbody').innerHTML = '';
-  $('#cheapest').innerHTML = '';
-  $('#affList').innerHTML = '';
+  elements.loading.style.display = 'block';
+  elements.tablesContainer.style.display = 'none';
+  elements.hotelTitle.style.display = 'none';
 
   try {
     const res = await fetch('/api/convert', {
@@ -31,62 +70,95 @@ $('#frm').addEventListener('submit', async e => {
       return;
     }
 
-    // 호텔 이름과 원본 URL에서 가져온 초기 가격 사용
+    // 호텔명과 가격 표시
     const hotelName = res.hotel;
     const initialPriceValue = res.initialPrice;
-
-    // 결과창 타이틀 수정: (호텔이름) – (원본 URL 가격)원
     const priceText = initialPriceValue > 0
       ? initialPriceValue.toLocaleString() + '원'
       : '가격 정보 없음';
-    $('#hotelTitle').textContent = `${hotelName} – ${priceText}`;
-    $('#hotelTitle').style.display = 'block';
+    
+    elements.hotelTitle.textContent = `${hotelName} - ${priceText}`;
+
+    // CID별 가격 테이블 생성
+    elements.tableBody.innerHTML = '';
+    elements.cheapest.innerHTML = '';
 
     res.priced.forEach(item => {
       const tr = document.createElement('tr');
-      const priceDisplay = item.isSoldOut ? '매진' : item.price.toLocaleString();
-      const priceClass = item.isSoldOut ? 'sold-out' : '';
+      const priceDisplay = item.soldOut ? '매진' : item.price.toLocaleString();
+      const priceClass = item.soldOut ? 'sold-out' : '';
+      
       tr.innerHTML = `
         <td>${item.label}</td>
         <td class="${priceClass}">${priceDisplay}</td>
-        <td><a href="${item.url}" target="_blank">열기</a></td>
-        <td><button data-url="${item.url}">복사</button></td>`;
-      $('#tbl tbody').appendChild(tr);
+        <td><button class="btn-link" onclick="window.open('${item.url}', '_blank')">열기</button></td>
+        <td><button class="btn-link btn-copy" onclick="copyUrl('${item.url}')">복사</button></td>
+      `;
+      elements.tableBody.appendChild(tr);
     });
 
-    // 수정된 최저가 찾기 로직
-    const available = res.priced.filter(i => !i.isSoldOut && i.price > 0);
+    // 최저가 표시
+    const available = res.priced.filter(i => !i.soldOut && i.price > 0);
     if (available.length) {
       const best = available.reduce((min, current) => 
         current.price < min.price ? current : min
       );
-      $('#cheapest').innerHTML = `
+      elements.cheapest.innerHTML = `
         <td>🏆 최저가</td>
         <td>${best.price.toLocaleString()}</td>
-        <td><a href="${best.url}" target="_blank">열기</a></td>
-        <td><button data-url="${best.url}">복사</button></td>`;
+        <td><button class="btn-link" onclick="window.open('${best.url}', '_blank')">열기</button></td>
+        <td><button class="btn-link btn-copy" onclick="copyUrl('${best.url}')">복사</button></td>
+      `;
     } else {
-      $('#cheapest').innerHTML = `
-        <td colspan="4" class="no-available">모든 객실이 매진입니다.</td>`;
+      elements.cheapest.innerHTML = `
+        <td colspan="4" class="no-available">모든 객실이 매진입니다.</td>
+      `;
     }
 
-    $('#tbl').style.display = 'table';
-
+    // 제휴 링크 테이블 생성
+    elements.affList.innerHTML = '';
     res.affiliateLinks.forEach(link => {
-      const li = document.createElement('li');
-      li.innerHTML = `<a href="${link.url}" target="_blank">${link.label}</a>`;
-      $('#affList').appendChild(li);
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${link.label}</td>
+        <td><button class="btn-link" onclick="window.open('${link.url}', '_blank')">${link.label} 바로가기</button></td>
+      `;
+      elements.affList.appendChild(tr);
     });
-    $('#aff').style.display = 'block';
 
-    document.querySelectorAll('button[data-url]').forEach(btn =>
-      btn.addEventListener('click', () => copy(btn.dataset.url))
-    );
+    showResults();
 
   } catch (err) {
     console.error(err);
     alert('오류가 발생했습니다.');
   } finally {
-    $('#loading').style.display = 'none';
+    elements.loading.style.display = 'none';
   }
 });
+
+// URL 복사 함수
+function copyUrl(url) {
+  copy(url);
+}
+
+// 리셋 버튼 이벤트
+elements.resetBtn.addEventListener('click', resetToInitial);
+
+// 도움말 팝업 이벤트
+elements.helpBtn.addEventListener('click', () => {
+  elements.helpPopup.style.display = 'flex';
+});
+
+elements.closePopup.addEventListener('click', () => {
+  elements.helpPopup.style.display = 'none';
+});
+
+// 팝업 외부 클릭 시 닫기
+elements.helpPopup.addEventListener('click', (e) => {
+  if (e.target === elements.helpPopup) {
+    elements.helpPopup.style.display = 'none';
+  }
+});
+
+// 초기 상태로 시작
+resetToInitial();
