@@ -89,17 +89,27 @@ public class ConvertController {
         String currency = extractCurrencyFromUrl(url);
 
         // 1) 먼저 초기 호텔명과 가격 가져오기
+        System.out.println("=== 원본 주소에서 호텔명과 가격 가져오기 ===");
         String initialHotel = "호텔명 없음";
         double initialPrice = 0;
+        String initialCurrency = "UNKNOWN";
         int maxAttempts = 3;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
-                JsonNode initialRoot = fetchSecondaryDataJson(url, currency);
+                JsonNode initialRoot = fetchSecondaryDataJson(url, currency, "INITIAL");
                 initialHotel = initialRoot.path("hotelInfo").path("name").asText("호텔명 없음");
                 initialPrice = initialRoot.path("mosaicInitData")
                                           .path("discount")
                                           .path("cheapestPrice")
                                           .asDouble(0);
+                initialCurrency = initialRoot.path("mosaicInitData")
+                                             .path("discount")
+                                             .path("currency")
+                                             .asText("UNKNOWN");
+                
+                System.out.printf("원본 호텔명: %s, 원본 가격: %.2f (currency: %s)%n", 
+                    initialHotel, initialPrice, initialCurrency);
+                
                 if (initialPrice > 0) break;
                 if (attempt < maxAttempts) Thread.sleep(1000L * attempt);
             } catch (Exception e) {
@@ -113,6 +123,7 @@ public class ConvertController {
         List<CidEntry> cidList = buildCidList();
         List<LinkInfo> results = new ArrayList<>();
 
+        System.out.println("\n=== CID별 가격 수집 시작 ===");
         System.out.println("총 " + cidList.size() + "개 CID로 순차적 가격 수집 시작...");
 
         for (int i = 0; i < cidList.size(); i++) {
@@ -136,7 +147,8 @@ public class ConvertController {
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("success", true);
         resp.put("hotel", hotelName);
-        resp.put("initialPrice", initialPrice);  // 초기 가격 추가
+        resp.put("initialPrice", initialPrice);
+        resp.put("initialCurrency", initialCurrency);  // 초기 통화 정보 추가
         resp.put("priced", results);
         resp.put("cheapest", cheapest);
         resp.put("affiliateLinks", AFFILIATES);
@@ -153,20 +165,24 @@ public class ConvertController {
         int maxAttempts = 3;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
-                JsonNode root = fetchSecondaryDataJson(modUrl, currency);
+                JsonNode root = fetchSecondaryDataJson(modUrl, currency, entry.label());
 
                 String hotel = root.path("hotelInfo").path("name").asText(null);
                 double price = root.path("mosaicInitData")
                                    .path("discount")
                                    .path("cheapestPrice")
                                    .asDouble(0);
+                String apiCurrency = root.path("mosaicInitData")
+                                         .path("discount")
+                                         .path("currency")
+                                         .asText("UNKNOWN");
 
                 boolean soldOut = price == 0;
                 System.out.printf(
                     soldOut
-                        ? "✗ %s (CID: %d) - 품절%n"
-                        : "✓ %s (CID: %d) - 가격: %.2f %s%n",
-                    entry.label(), entry.cid(), price, currency
+                        ? "✗ %s (CID: %d) - 품절 (currency: %s)%n"
+                        : "✓ %s (CID: %d) - 가격: %.2f (currency: %s)%n",
+                    entry.label(), entry.cid(), price, apiCurrency
                 );
 
                 return new LinkInfo(entry.label(), entry.cid(), modUrl, price, soldOut, hotel);
@@ -186,7 +202,7 @@ public class ConvertController {
         return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
     }
 
-    private JsonNode fetchSecondaryDataJson(String hotelPageUrl, String currency) throws Exception {
+    private JsonNode fetchSecondaryDataJson(String hotelPageUrl, String currency, String debugLabel) throws Exception {
         // HTML 파싱 시 UTF-8 처리 + Python requests와 동일한 언어 헤더 추가
         Document doc = Jsoup.connect(hotelPageUrl)
             .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
@@ -203,6 +219,9 @@ public class ConvertController {
                                 .split("\"")[0]
                                 .replace("&amp;", "&");
         String apiUrl = "https://www.agoda.com" + apiPath;
+
+        // API 요청 URL 출력 (디버깅용)
+        System.out.printf("[%s] API Request URL: %s%n", debugLabel, apiUrl);
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(apiUrl))
