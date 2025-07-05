@@ -2,6 +2,9 @@ package com.example.agoda.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.gargoylesoftware.htmlunit.WebClient;
+import com.gargoylesoftware.htmlunit.html.HtmlPage;
+import com.gargoylesoftware.htmlunit.html.HtmlElement;
 import org.jsoup.Connection;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -352,7 +355,7 @@ public class ConvertController {
         }
     }
 
-    // *** 수정된 부분: 구글 CID만 DOM 시도 후 실패하면 기존 방식 ***
+    // *** 수정된 부분: 구글 CID만 HtmlUnit 방식, 나머지는 기존 방식 ***
     private LinkInfo fetchSequentiallyWithSession(String baseUrl, CidEntry entry, Map<String, String> sessionCookies) {
         String modUrl = baseUrl.replaceAll("cid=-?\\d+", "cid=" + entry.cid());
         String currency = extractCurrencyFromUrl(baseUrl);
@@ -364,23 +367,23 @@ public class ConvertController {
                 String hotel = "호텔명 없음";
                 double price = 0;
                 
-                // *** 구글 CID: DOM 시도 후 실패하면 JSON 방식 ***
+                // *** 구글 CID: HtmlUnit 방식 사용 ***
                 if (entry.label().contains("구글")) {
-                    System.out.printf("[%s] 구글 CID 감지 - DOM 방식 시도%n", entry.label());
+                    System.out.printf("[%s] 구글 CID 감지 - HtmlUnit 방식 시도%n", entry.label());
                     
                     try {
                         price = extractPriceFromDOMWithWaiting(modUrl, updatedCookies, entry.label());
                         hotel = extractHotelNameFromDOM(modUrl, updatedCookies);
                         
                         if (price > 0) {
-                            System.out.printf("[%s] ✅ DOM 방식 성공%n", entry.label());
+                            System.out.printf("[%s] ✅ HtmlUnit 방식 성공%n", entry.label());
                         } else {
-                            throw new Exception("DOM에서 가격을 찾지 못함");
+                            throw new Exception("HtmlUnit에서 가격을 찾지 못함");
                         }
-                    } catch (Exception domException) {
-                        System.out.printf("[%s] ❌ DOM 방식 실패: %s, JSON 방식으로 전환%n", entry.label(), domException.getMessage());
+                    } catch (Exception htmlunitException) {
+                        System.out.printf("[%s] ❌ HtmlUnit 방식 실패: %s, JSON 방식으로 전환%n", entry.label(), htmlunitException.getMessage());
                         
-                        // DOM 실패 시 기존 JSON 방식으로 fallback
+                        // HtmlUnit 실패 시 기존 JSON 방식으로 fallback
                         JsonNode root = fetchSecondaryDataJsonWithSession(modUrl, currency, entry.label(), updatedCookies);
                         hotel = root.path("hotelInfo").path("name").asText(null);
                         price = root.path("tealium").path("totalPriceTaxInc").asDouble(0);
@@ -418,118 +421,90 @@ public class ConvertController {
         return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
     }
 
-    // *** 개선된 구글 CID용 DOM 가격 추출 메서드 (10초 대기 + 3번 재시도) ***
+    // *** HtmlUnit을 사용한 JavaScript 실행 가능한 가격 추출 (간소화) ***
     private double extractPriceFromDOMWithWaiting(String hotelUrl, Map<String, String> cookies, String label) throws Exception {
-        System.out.printf("[%s] DOM 방식 가격 추출 시작%n", label);
+        System.out.printf("[%s] HtmlUnit 방식 가격 추출 시작%n", label);
         
-        // 10초 대기 (JavaScript 실행 시간 확보)
-        Thread.sleep(10000);
-        System.out.printf("[%s] 10초 대기 완료, DOM 가격 추출 진행%n", label);
-        
-        // 최대 3번 재시도
-        for (int attempt = 1; attempt <= 3; attempt++) {
-            try {
-                Document doc = Jsoup.connect(hotelUrl)
-                    .cookies(cookies)
-                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                    .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    .timeout(20000) // 타임아웃 20초로 증가
-                    .ignoreHttpErrors(true)
-                    .followRedirects(true)
-                    .get();
-                
-                System.out.printf("[%s] 시도 %d: DOM 문서 로드 완료 (크기: %d chars)%n", label, attempt, doc.html().length());
-                System.out.printf("[%s] 시도 %d: 페이지 제목: %s%n", label, attempt, doc.title());
-                
-                // 확인된 선택자로 직접 시도
-                String priceSelector = "#hotelNavBar > nav > div > div > div.ae161-box.ae161-fill-inherit.ae161-text-inherit.ae161-items-center.ae161-flex.ae161-shrink > div > span > div > span:nth-child(5)";
-                
-                Element element = doc.selectFirst(priceSelector);
-                if (element != null) {
-                    System.out.printf("[%s] 시도 %d: ✅ 요소 발견: '%s'%n", label, attempt, element.text().trim());
-                    double price = extractPriceFromElement(element, label);
-                    if (price > 0) {
-                        System.out.printf("[%s] ✅ DOM 가격 추출 성공 (시도 %d): %.0f%n", label, attempt, price);
-                        return price;
-                    } else {
-                        System.out.printf("[%s] 시도 %d: 요소는 있지만 가격 추출 실패%n", label, attempt);
-                    }
-                } else {
-                    System.out.printf("[%s] 시도 %d: 가격 요소 없음%n", label, attempt);
-                    
-                    // hotelNavBar가 있는지 확인
-                    Element navBar = doc.selectFirst("#hotelNavBar");
-                    if (navBar != null) {
-                        System.out.printf("[%s] 시도 %d: hotelNavBar 존재하지만 내부 요소 없음%n", label, attempt);
-                        
-                        // nav 요소 확인
-                        Element nav = navBar.selectFirst("nav");
-                        if (nav != null) {
-                            System.out.printf("[%s] 시도 %d: nav 요소 존재%n", label, attempt);
-                            Elements spans = nav.select("span");
-                            System.out.printf("[%s] 시도 %d: nav 안의 span 요소: %d개%n", label, attempt, spans.size());
-                        } else {
-                            System.out.printf("[%s] 시도 %d: nav 요소 없음%n", label, attempt);
-                        }
-                    } else {
-                        System.out.printf("[%s] 시도 %d: hotelNavBar 자체가 없음%n", label, attempt);
-                    }
-                }
-                
-                // 재시도 전 3초 추가 대기
-                if (attempt < 3) {
-                    System.out.printf("[%s] %d초 후 재시도...%n", label, 3);
-                    Thread.sleep(3000);
-                }
-                
-            } catch (Exception e) {
-                System.out.printf("[%s] 시도 %d 실패: %s%n", label, attempt, e.getMessage());
-                if (attempt < 3) {
-                    Thread.sleep(2000);
+        WebClient webClient = new WebClient();
+        try {
+            // JavaScript 활성화 및 설정
+            webClient.getOptions().setJavaScriptEnabled(true);
+            webClient.getOptions().setCssEnabled(false);
+            webClient.getOptions().setThrowExceptionOnFailingStatusCode(false);
+            webClient.getOptions().setThrowExceptionOnScriptError(false);
+            webClient.getOptions().setTimeout(30000); // 30초 타임아웃
+            webClient.getOptions().setUseInsecureSSL(true);
+            
+            // User-Agent 설정
+            webClient.addRequestHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            webClient.addRequestHeader("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8");
+            
+            // 쿠키 설정
+            for (Map.Entry<String, String> cookie : cookies.entrySet()) {
+                try {
+                    webClient.getCookieManager().addCookie(
+                        new com.gargoylesoftware.htmlunit.util.Cookie("www.agoda.com", cookie.getKey(), cookie.getValue())
+                    );
+                } catch (Exception e) {
+                    // 쿠키 설정 실패 시 무시
                 }
             }
+            
+            System.out.printf("[%s] 페이지 로드 시작: %s%n", label, hotelUrl);
+            
+            // 페이지 로드
+            HtmlPage page = webClient.getPage(hotelUrl);
+            
+            System.out.printf("[%s] 페이지 로드 완료, JavaScript 실행 대기 중... (10초)%n", label);
+            
+            // JavaScript 실행 대기 (AGODASPONSORED 적용 시간)
+            webClient.waitForBackgroundJavaScript(10000);
+            
+            System.out.printf("[%s] JavaScript 실행 완료, 가격 요소 검색%n", label);
+            
+            // 확인된 선택자로 가격 찾기
+            HtmlElement priceElement = page.querySelector("#hotelNavBar > nav > div > div > div.ae161-box.ae161-fill-inherit.ae161-text-inherit.ae161-items-center.ae161-flex.ae161-shrink > div > span > div > span:nth-child(5)");
+            
+            if (priceElement != null) {
+                String priceText = priceElement.getTextContent().trim();
+                System.out.printf("[%s] ✅ 가격 요소 발견: '%s'%n", label, priceText);
+                
+                double price = extractPriceFromText(priceText, label);
+                if (price > 0) {
+                    System.out.printf("[%s] ✅ HtmlUnit 가격 추출 성공: %.0f%n", label, price);
+                    return price;
+                }
+            } else {
+                System.out.printf("[%s] ❌ 가격 요소를 찾지 못함%n", label);
+            }
+            
+            throw new Exception("지정된 선택자에서 가격을 찾지 못함");
+            
+        } finally {
+            webClient.close();
         }
-        
-        throw new Exception("3번 시도 후에도 DOM에서 가격을 찾지 못함");
     }
 
-    // *** HTML 요소에서 가격 추출 (원화 기호 없는 버전) ***
-    private double extractPriceFromElement(Element element, String debugLabel) {
-        if (element == null) return 0;
+    // 텍스트에서 가격 추출
+    private double extractPriceFromText(String text, String label) {
+        if (text == null || text.isEmpty()) return 0;
         
-        String text = element.text().trim();
-        System.out.printf("[%s] 요소 텍스트: '%s'%n", debugLabel, text);
-        
-        if (text.isEmpty()) {
-            return 0;
-        }
-        
-        // 숫자와 쉼표만 추출
         String numbersOnly = text.replaceAll("[^0-9,]", "");
-        System.out.printf("[%s] 숫자 추출: '%s'%n", debugLabel, numbersOnly);
-        
         if (numbersOnly.isEmpty()) return 0;
         
         try {
-            String cleanNumber = numbersOnly.replace(",", "");
-            double price = Double.parseDouble(cleanNumber);
-            
-            // 가격 범위 검증 (10,000원 ~ 10,000,000원)
+            double price = Double.parseDouble(numbersOnly.replace(",", ""));
             if (price >= 10000 && price <= 10_000_000) {
-                System.out.printf("[%s] ✅ 유효한 가격: %.0f%n", debugLabel, price);
                 return price;
-            } else {
-                System.out.printf("[%s] ❌ 가격 범위 초과: %.0f%n", debugLabel, price);
             }
         } catch (NumberFormatException e) {
-            System.out.printf("[%s] 숫자 변환 실패: %s%n", debugLabel, e.getMessage());
+            System.out.printf("[%s] 숫자 변환 실패: %s%n", label, e.getMessage());
         }
         
         return 0;
     }
 
-    // *** DOM에서 호텔명 추출 (지정된 선택자만 사용) ***
+    // *** Jsoup을 사용한 호텔명 추출 (기존 방식 유지) ***
     private String extractHotelNameFromDOM(String hotelUrl, Map<String, String> cookies) {
         try {
             Document doc = Jsoup.connect(hotelUrl)
