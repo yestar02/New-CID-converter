@@ -37,9 +37,9 @@
     
     <!-- JavaScript 실행 가능한 HtmlUnit -->
     <dependency>
-      <groupId>net.sourceforge.htmlunit</groupId>
+      <groupId>org.htmlunit</groupId>
       <artifactId>htmlunit</artifactId>
-      <version>2.7.0</version>
+      <version>3.5.0</version>
     </dependency>
   </dependencies>
 
