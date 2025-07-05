@@ -418,153 +418,80 @@ public class ConvertController {
         return new LinkInfo(entry.label(), entry.cid(), modUrl, 0, true, null);
     }
 
-    // *** 개선된 구글 CID용 DOM 가격 추출 메서드 (원화 기호 없는 버전) ***
+    // *** 개선된 구글 CID용 DOM 가격 추출 메서드 (10초 대기 + 3번 재시도) ***
     private double extractPriceFromDOMWithWaiting(String hotelUrl, Map<String, String> cookies, String label) throws Exception {
         System.out.printf("[%s] DOM 방식 가격 추출 시작%n", label);
         
-        // 5초 대기 후 DOM에서 가격 추출
-        Thread.sleep(5000);
-        System.out.printf("[%s] 5초 대기 완료, DOM 가격 추출 진행%n", label);
+        // 10초 대기 (JavaScript 실행 시간 확보)
+        Thread.sleep(10000);
+        System.out.printf("[%s] 10초 대기 완료, DOM 가격 추출 진행%n", label);
         
-        Document doc = Jsoup.connect(hotelUrl)
-            .cookies(cookies)
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            .timeout(15000)
-            .ignoreHttpErrors(true)
-            .followRedirects(true)
-            .get();
-        
-        System.out.printf("[%s] DOM 문서 로드 완료 (크기: %d chars)%n", label, doc.html().length());
-        System.out.printf("[%s] 페이지 제목: %s%n", label, doc.title());
-        
-        // 여러 선택자를 순서대로 시도
-        String[] priceSelectors = {
-            // 1순위: 원래 제공된 선택자
-            "#hotelNavBar > nav > div > div > div.ae161-box.ae161-fill-inherit.ae161-text-inherit.ae161-items-center.ae161-flex.ae161-shrink > div > span > div > span:nth-child(5)",
-            
-            // 2순위: 더 전체적인 경로
-            "#property-critical-root > div > div.Northstar > div.Box-sc-kv6pi1-0.hRUYUu.NorthstarTopContent > div.Box-sc-kv6pi1-0.cJiLOx.sc-fodVxV.bOijuf > #hotelNavBar > nav > div > div > div.ae161-box.ae161-fill-inherit.ae161-text-inherit.ae161-items-center.ae161-flex.ae161-shrink > div > span > div > span:nth-child(5)",
-            
-            // 3순위: XPath 기반으로 만든 CSS 선택자
-            "body > div:nth-child(11) nav span:nth-child(5)",
-            
-            // 4순위: hotelNavBar에서 5번째 span 찾기
-            "#hotelNavBar span:nth-child(5)",
-            
-            // 5순위: hotelNavBar의 모든 span (숫자만 있는 것 찾기)
-            "#hotelNavBar span",
-            
-            // 6순위: 더 간단한 접근
-            "#hotelNavBar nav span"
-        };
-        
-        for (int i = 0; i < priceSelectors.length; i++) {
-            String selector = priceSelectors[i];
-            System.out.printf("[%s] 선택자 시도 %d/%d: %s%n", label, i+1, priceSelectors.length, 
-                             selector.length() > 80 ? selector.substring(0, 80) + "..." : selector);
-            
+        // 최대 3번 재시도
+        for (int attempt = 1; attempt <= 3; attempt++) {
             try {
-                if (selector.equals("#hotelNavBar span") || selector.equals("#hotelNavBar nav span")) {
-                    // 숫자 패턴이 있는 span 찾기
-                    Elements elements = doc.select(selector);
-                    System.out.printf("[%s] 발견된 span 요소: %d개%n", label, elements.size());
-                    
-                    for (int j = 0; j < elements.size(); j++) {
-                        Element el = elements.get(j);
-                        String text = el.text().trim();
-                        System.out.printf("[%s] span[%d]: '%s'%n", label, j+1, text);
-                        
-                        // 숫자와 쉼표만 있는 패턴 체크 (예: "103,531")
-                        if (text.matches("^[0-9,]+$") && text.contains(",")) {
-                            double price = extractPriceFromElement(el, label);
-                            if (price > 0) {
-                                System.out.printf("[%s] ✅ DOM 가격 추출 성공 (선택자 %d, span %d): %.0f%n", label, i+1, j+1, price);
-                                return price;
-                            }
-                        }
+                Document doc = Jsoup.connect(hotelUrl)
+                    .cookies(cookies)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .header("Accept-Language", "ko-KR,ko;q=0.9,en;q=0.8")
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .timeout(20000) // 타임아웃 20초로 증가
+                    .ignoreHttpErrors(true)
+                    .followRedirects(true)
+                    .get();
+                
+                System.out.printf("[%s] 시도 %d: DOM 문서 로드 완료 (크기: %d chars)%n", label, attempt, doc.html().length());
+                System.out.printf("[%s] 시도 %d: 페이지 제목: %s%n", label, attempt, doc.title());
+                
+                // 확인된 선택자로 직접 시도
+                String priceSelector = "#hotelNavBar > nav > div > div > div.ae161-box.ae161-fill-inherit.ae161-text-inherit.ae161-items-center.ae161-flex.ae161-shrink > div > span > div > span:nth-child(5)";
+                
+                Element element = doc.selectFirst(priceSelector);
+                if (element != null) {
+                    System.out.printf("[%s] 시도 %d: ✅ 요소 발견: '%s'%n", label, attempt, element.text().trim());
+                    double price = extractPriceFromElement(element, label);
+                    if (price > 0) {
+                        System.out.printf("[%s] ✅ DOM 가격 추출 성공 (시도 %d): %.0f%n", label, attempt, price);
+                        return price;
+                    } else {
+                        System.out.printf("[%s] 시도 %d: 요소는 있지만 가격 추출 실패%n", label, attempt);
                     }
                 } else {
-                    Element element = doc.selectFirst(selector);
-                    if (element != null) {
-                        System.out.printf("[%s] 요소 발견: '%s'%n", label, element.text().trim());
-                        double price = extractPriceFromElement(element, label);
-                        if (price > 0) {
-                            System.out.printf("[%s] ✅ DOM 가격 추출 성공 (선택자 %d): %.0f%n", label, i+1, price);
-                            return price;
+                    System.out.printf("[%s] 시도 %d: 가격 요소 없음%n", label, attempt);
+                    
+                    // hotelNavBar가 있는지 확인
+                    Element navBar = doc.selectFirst("#hotelNavBar");
+                    if (navBar != null) {
+                        System.out.printf("[%s] 시도 %d: hotelNavBar 존재하지만 내부 요소 없음%n", label, attempt);
+                        
+                        // nav 요소 확인
+                        Element nav = navBar.selectFirst("nav");
+                        if (nav != null) {
+                            System.out.printf("[%s] 시도 %d: nav 요소 존재%n", label, attempt);
+                            Elements spans = nav.select("span");
+                            System.out.printf("[%s] 시도 %d: nav 안의 span 요소: %d개%n", label, attempt, spans.size());
+                        } else {
+                            System.out.printf("[%s] 시도 %d: nav 요소 없음%n", label, attempt);
                         }
                     } else {
-                        System.out.printf("[%s] 요소 없음%n", label);
+                        System.out.printf("[%s] 시도 %d: hotelNavBar 자체가 없음%n", label, attempt);
                     }
                 }
+                
+                // 재시도 전 3초 추가 대기
+                if (attempt < 3) {
+                    System.out.printf("[%s] %d초 후 재시도...%n", label, 3);
+                    Thread.sleep(3000);
+                }
+                
             } catch (Exception e) {
-                System.out.printf("[%s] 선택자 %d 오류: %s%n", label, i+1, e.getMessage());
-            }
-        }
-        
-        // 모든 선택자 실패 시 디버깅 정보 출력
-        debugPriceElementsInNavBar(doc, label);
-        
-        throw new Exception("모든 선택자에서 가격을 찾지 못함");
-    }
-
-    // hotelNavBar 안의 모든 요소 디버깅 (원화 기호 없는 버전)
-    private void debugPriceElementsInNavBar(Document doc, String label) {
-        System.out.printf("[%s] === hotelNavBar 디버깅 ===%n", label);
-        
-        Element navBar = doc.selectFirst("#hotelNavBar");
-        if (navBar != null) {
-            System.out.printf("[%s] #hotelNavBar 존재%n", label);
-            
-            // nav 요소 확인
-            Element nav = navBar.selectFirst("nav");
-            if (nav != null) {
-                System.out.printf("[%s] nav 요소 존재%n", label);
-                
-                // nav 안의 모든 span 요소들
-                Elements spans = nav.select("span");
-                System.out.printf("[%s] nav 안의 span 요소: %d개%n", label, spans.size());
-                
-                for (int i = 0; i < spans.size(); i++) {
-                    Element span = spans.get(i);
-                    String text = span.text().trim();
-                    if (!text.isEmpty()) {
-                        System.out.printf("[%s] span[%d]: '%s' (숫자패턴: %s)%n", 
-                                         label, i+1, text, text.matches("^[0-9,]+$"));
-                    }
-                }
-                
-                // 숫자 패턴이 포함된 요소들
-                Elements numElements = nav.select("*");
-                int numCount = 0;
-                for (Element el : numElements) {
-                    String text = el.text().trim();
-                    if (text.matches("^[0-9,]+$") && text.length() > 3) {
-                        System.out.printf("[%s] 숫자 요소[%d]: '%s'%n", label, ++numCount, text);
-                    }
-                }
-                System.out.printf("[%s] nav 안의 숫자 패턴 요소: %d개%n", label, numCount);
-                
-            } else {
-                System.out.printf("[%s] nav 요소 없음%n", label);
-            }
-        } else {
-            System.out.printf("[%s] #hotelNavBar 요소 없음%n", label);
-            
-            // 전체 문서에서 숫자 패턴 찾기
-            Elements numElements = doc.select("span");
-            int foundCount = 0;
-            for (Element el : numElements) {
-                String text = el.text().trim();
-                if (text.matches("^[0-9,]+$") && text.length() > 5) {
-                    System.out.printf("[%s] 전체 문서 숫자[%d]: '%s'%n", label, ++foundCount, text);
-                    if (foundCount >= 5) break; // 최대 5개만 출력
+                System.out.printf("[%s] 시도 %d 실패: %s%n", label, attempt, e.getMessage());
+                if (attempt < 3) {
+                    Thread.sleep(2000);
                 }
             }
         }
         
-        System.out.printf("[%s] =========================%n", label);
+        throw new Exception("3번 시도 후에도 DOM에서 가격을 찾지 못함");
     }
 
     // *** HTML 요소에서 가격 추출 (원화 기호 없는 버전) ***
@@ -588,7 +515,7 @@ public class ConvertController {
             String cleanNumber = numbersOnly.replace(",", "");
             double price = Double.parseDouble(cleanNumber);
             
-            // 가격 범위 검증 (10,000원 ~ 10,000,000원) - 더 넓은 범위
+            // 가격 범위 검증 (10,000원 ~ 10,000,000원)
             if (price >= 10000 && price <= 10_000_000) {
                 System.out.printf("[%s] ✅ 유효한 가격: %.0f%n", debugLabel, price);
                 return price;
