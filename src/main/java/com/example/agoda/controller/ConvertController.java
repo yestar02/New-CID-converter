@@ -144,19 +144,22 @@ public class ConvertController {
                 System.out.println("새로운 세션 쿠키 수집: " + sessionCookies.size() + "개");
             }
 
-            // 2) 세션 쿠키로 초기 호텔명과 가격 가져오기
+            // 2) 세션 쿠키로 초기 호텔명과 가격 가져오기 (안정화된 가격으로)
             sendProgress(sessionId, ++currentStep, totalSteps);
             String initialHotel = "호텔명 없음";
             double initialPrice = 0;
             String initialCurrency = "UNKNOWN";
 
             try {
+                // 안정화된 가격으로 초기값 설정
+                double stabilizedPrice = getStabilizedPrice(url, currency, "INITIAL", sessionCookies);
                 JsonNode initialRoot = fetchSecondaryDataJsonWithSession(url, currency, "INITIAL", sessionCookies);
+                
                 initialHotel = initialRoot.path("hotelInfo").path("name").asText("호텔명 없음");
-                initialPrice = initialRoot.path("mosaicInitData").path("discount").path("cheapestPrice").asDouble(0);
+                initialPrice = stabilizedPrice > 0 ? stabilizedPrice : initialRoot.path("mosaicInitData").path("discount").path("cheapestPrice").asDouble(0);
                 initialCurrency = initialRoot.path("mosaicInitData").path("discount").path("currency").asText("UNKNOWN");
                 
-                System.out.printf("사용자 쿠키로 가져온 초기 가격: %.2f %s%n", initialPrice, initialCurrency);
+                System.out.printf("안정화된 초기 가격: %.2f %s%n", initialPrice, initialCurrency);
             } catch (Exception e) {
                 System.out.println("초기 가격 정보를 가져오는데 실패했습니다: " + e.getMessage());
             }
@@ -237,6 +240,46 @@ public class ConvertController {
         } catch (Exception e) {
             sendError(sessionId, "처리 중 오류가 발생했습니다: " + e.getMessage());
         }
+    }
+
+    // 가격 안정화 메서드 추가
+    private double getStabilizedPrice(String hotelPageUrl, String currency, String debugLabel, Map<String, String> sessionCookies) throws Exception {
+        double previousPrice = 0;
+        double currentPrice = 0;
+        int maxAttempts = 3;
+        int stableCount = 0;
+        
+        for (int i = 0; i < maxAttempts; i++) {
+            JsonNode root = fetchSecondaryDataJsonWithSession(hotelPageUrl, currency, debugLabel + "-" + (i + 1), sessionCookies);
+            currentPrice = root.path("mosaicInitData").path("discount").path("cheapestPrice").asDouble(0);
+            
+            System.out.printf("[%s] 가격 안정화 시도 %d: %.2f원%n", debugLabel, i + 1, currentPrice);
+            
+            if (currentPrice == previousPrice && currentPrice > 0) {
+                stableCount++;
+                if (stableCount >= 2) {
+                    System.out.printf("[%s] ✓ 가격 안정화 완료: %.2f원%n", debugLabel, currentPrice);
+                    return currentPrice;
+                }
+            } else {
+                stableCount = 0;
+            }
+            
+            previousPrice = currentPrice;
+            
+            // 2초 대기 후 재시도
+            if (i < maxAttempts - 1) {
+                try {
+                    Thread.sleep(2000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new Exception("가격 안정화 대기 중 인터럽트 발생: " + e.getMessage());
+                }
+            }
+        }
+        
+        System.out.printf("[%s] ⚠ 가격 안정화되지 않음, 마지막 값 반환: %.2f원%n", debugLabel, currentPrice);
+        return currentPrice; // 안정화되지 않았어도 마지막 값 반환
     }
 
     // 정렬 메서드 추가
@@ -351,7 +394,7 @@ public class ConvertController {
         }
     }
 
-    // 기존 메서드들 유지
+    // 수정된 fetchSequentiallyWithSession 메서드 - 안정화된 가격 사용
     private LinkInfo fetchSequentiallyWithSession(String baseUrl, CidEntry entry, Map<String, String> sessionCookies) {
         String modUrl = baseUrl.replaceAll("cid=-?\\d+", "cid=" + entry.cid());
         String currency = extractCurrencyFromUrl(baseUrl);
@@ -360,17 +403,19 @@ public class ConvertController {
         int maxAttempts = 3;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
+                // 안정화된 가격 가져오기
+                double stabilizedPrice = getStabilizedPrice(modUrl, currency, entry.label(), updatedCookies);
                 JsonNode root = fetchSecondaryDataJsonWithSession(modUrl, currency, entry.label(), updatedCookies);
 
                 String hotel = root.path("hotelInfo").path("name").asText(null);
-                double price = root.path("mosaicInitData").path("discount").path("cheapestPrice").asDouble(0);
+                double price = stabilizedPrice > 0 ? stabilizedPrice : root.path("mosaicInitData").path("discount").path("cheapestPrice").asDouble(0);
                 String apiCurrency = root.path("mosaicInitData").path("discount").path("currency").asText("UNKNOWN");
 
                 boolean soldOut = price == 0;
                 System.out.printf(
                     soldOut
                         ? "✗ %s (CID: %d) - 품절 (currency: %s)%n"
-                        : "✓ %s (CID: %d) - 가격: %.2f (currency: %s)%n",
+                        : "✓ %s (CID: %d) - 안정화된 가격: %.2f (currency: %s)%n",
                     entry.label(), entry.cid(), price, apiCurrency
                 );
 
@@ -458,7 +503,6 @@ public class ConvertController {
         return "eeeb2a37-a3e0-4932-8325-55d6a8ba95a4";
     }
 
-    // 1.5초 대기 삭제된 fetchSecondaryDataJsonWithSession 메서드
     private JsonNode fetchSecondaryDataJsonWithSession(String hotelPageUrl, String currency, String debugLabel, Map<String, String> sessionCookies) throws Exception {
         Document doc = Jsoup.connect(hotelPageUrl)
             .cookies(sessionCookies)
@@ -496,8 +540,6 @@ public class ConvertController {
             .build();
 
         HttpResponse<String> apiResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-
-        // 1.5초 대기 삭제됨 - 즉시 JSON 반환
         return mapper.readTree(apiResponse.body());
     }
 
