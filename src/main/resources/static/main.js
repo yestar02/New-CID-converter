@@ -41,6 +41,19 @@ function generateSessionId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
+// 사용자의 현재 쿠키 추출
+function getUserCookies() {
+    const cookies = {};
+    document.cookie.split(';').forEach(cookie => {
+        const [name, value] = cookie.trim().split('=');
+        if (name && value) {
+            cookies[name] = decodeURIComponent(value);
+        }
+    });
+    console.log('추출된 사용자 쿠키:', Object.keys(cookies).length + '개');
+    return cookies;
+}
+
 // 진행율 업데이트
 function updateProgress(percentage) {
     elements.progressFill.style.width = percentage + '%';
@@ -101,6 +114,7 @@ elements.form.addEventListener('submit', async e => {
     if (!url) return alert('URL을 입력하세요.');
 
     const sessionId = generateSessionId();
+    const userCookies = getUserCookies(); // 사용자 쿠키 추출
     
     elements.loading.style.display = 'block';
     elements.tablesContainer.style.display = 'none';
@@ -138,11 +152,15 @@ elements.form.addEventListener('submit', async e => {
     };
 
     try {
-        // 백엔드에 처리 요청
+        // 백엔드에 처리 요청 (사용자 쿠키 포함)
         const response = await fetch('/api/convert', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url, sessionId })
+            body: JSON.stringify({ 
+                url, 
+                sessionId,
+                userCookies // 사용자 쿠키 추가
+            })
         });
 
         const result = await response.json();
@@ -168,11 +186,13 @@ elements.form.addEventListener('submit', async e => {
 
 // 완료 데이터 처리
 function handleCompletionData(res) {
+    console.log('처리 완료:', res);
+    
     // 호텔명과 가격 표시
     const hotelName = res.hotel;
     const initialPriceValue = res.initialPrice;
     const priceText = initialPriceValue > 0 
-        ? initialPriceValue.toLocaleString() + '원' 
+        ? '₩' + initialPriceValue.toLocaleString()
         : '가격 정보 없음';
     elements.hotelTitle.textContent = `${hotelName} - ${priceText}`;
 
@@ -241,6 +261,9 @@ function copyUrl(url, button) {
         setTimeout(() => {
             button.textContent = originalText;
         }, 1000);
+    }).catch(err => {
+        console.error('복사 실패:', err);
+        alert('복사에 실패했습니다.');
     });
 }
 
@@ -264,5 +287,31 @@ elements.helpPopup.addEventListener('click', (e) => {
     }
 });
 
+// 페이지 언로드 시 SSE 연결 정리
+window.addEventListener('beforeunload', () => {
+    if (currentEventSource) {
+        currentEventSource.close();
+    }
+});
+
+// 키보드 이벤트 (Enter로 폼 제출)
+elements.urlInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+        elements.form.dispatchEvent(new Event('submit'));
+    }
+});
+
+// Escape 키로 팝업 닫기
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && elements.helpPopup.style.display === 'flex') {
+        elements.helpPopup.style.display = 'none';
+    }
+});
+
 // 초기 상태 설정
 resetToInitial();
+
+// 페이지 로드 완료 시 URL 입력창에 포커스
+window.addEventListener('load', () => {
+    elements.urlInput.focus();
+});

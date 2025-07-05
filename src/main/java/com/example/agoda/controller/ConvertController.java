@@ -96,9 +96,11 @@ public class ConvertController {
     }
 
     @PostMapping(value = "/convert", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<?> convert(@RequestBody Map<String, String> body) {
-        String url = body.get("url");
-        String sessionId = body.get("sessionId");
+    public ResponseEntity<?> convert(@RequestBody Map<String, Object> body) {
+        String url = (String) body.get("url");
+        String sessionId = (String) body.get("sessionId");
+        @SuppressWarnings("unchecked")
+        Map<String, String> userCookies = (Map<String, String>) body.get("userCookies");
 
         if (url == null || url.isBlank()) {
             return ResponseEntity.badRequest()
@@ -109,22 +111,38 @@ public class ConvertController {
                 .body(Map.of("success", false, "message", "유효한 아고다 상세 URL을 입력해주세요."));
         }
 
-        // 비동기로 처리
-        executorService.submit(() -> processConversion(url, sessionId));
+        // 비동기로 처리 (사용자 쿠키 포함)
+        executorService.submit(() -> processConversion(url, sessionId, userCookies));
 
         return ResponseEntity.ok(Map.of("success", true, "message", "처리를 시작했습니다."));
     }
 
-    private void processConversion(String url, String sessionId) {
+    private void processConversion(String url, String sessionId, Map<String, String> userCookies) {
         try {
             String currency = extractCurrencyFromUrl(url);
             List<CidEntry> cidList = buildCidList();
             int totalSteps = cidList.size() + 2;
             int currentStep = 0;
 
-            // 1) 프로그램 세션으로 한 번 접속하여 쿠키 수집 및 수정
+            // 1) 세션 쿠키 준비 (사용자 쿠키가 있으면 사용, 없으면 새로 수집)
             sendProgress(sessionId, ++currentStep, totalSteps);
-            Map<String, String> sessionCookies = collectSessionCookies(url);
+            Map<String, String> sessionCookies;
+            
+            if (userCookies != null && !userCookies.isEmpty()) {
+                sessionCookies = new HashMap<>(userCookies);
+                System.out.println("사용자 제공 쿠키 사용: " + userCookies.size() + "개");
+                
+                // 통화 관련 쿠키를 KRW로 강제 수정
+                if (sessionCookies.containsKey("agoda.version.03")) {
+                    String versionCookie = sessionCookies.get("agoda.version.03");
+                    versionCookie = versionCookie.replaceAll("CurLabel=\\w+", "CurLabel=KRW");
+                    sessionCookies.put("agoda.version.03", versionCookie);
+                }
+                sessionCookies.put("agoda.price.01", "PriceView=2");
+            } else {
+                sessionCookies = collectSessionCookies(url);
+                System.out.println("새로운 세션 쿠키 수집: " + sessionCookies.size() + "개");
+            }
 
             // 2) 세션 쿠키로 초기 호텔명과 가격 가져오기
             sendProgress(sessionId, ++currentStep, totalSteps);
@@ -137,6 +155,8 @@ public class ConvertController {
                 initialHotel = initialRoot.path("hotelInfo").path("name").asText("호텔명 없음");
                 initialPrice = initialRoot.path("mosaicInitData").path("discount").path("cheapestPrice").asDouble(0);
                 initialCurrency = initialRoot.path("mosaicInitData").path("discount").path("currency").asText("UNKNOWN");
+                
+                System.out.printf("사용자 쿠키로 가져온 초기 가격: %.2f %s%n", initialPrice, initialCurrency);
             } catch (Exception e) {
                 System.out.println("초기 가격 정보를 가져오는데 실패했습니다: " + e.getMessage());
             }
@@ -438,7 +458,7 @@ public class ConvertController {
         return "eeeb2a37-a3e0-4932-8325-55d6a8ba95a4";
     }
 
-    // 1.5초 대기 추가된 fetchSecondaryDataJsonWithSession 메서드
+    // 1.5초 대기 삭제된 fetchSecondaryDataJsonWithSession 메서드
     private JsonNode fetchSecondaryDataJsonWithSession(String hotelPageUrl, String currency, String debugLabel, Map<String, String> sessionCookies) throws Exception {
         Document doc = Jsoup.connect(hotelPageUrl)
             .cookies(sessionCookies)
@@ -477,15 +497,7 @@ public class ConvertController {
 
         HttpResponse<String> apiResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 
-        // JSON이 완전히 로드되도록 1.5초 대기
-        try {
-            Thread.sleep(1500);
-            System.out.printf("[%s] JSON 완전 로드를 위한 1.5초 대기 완료%n", debugLabel);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new Exception("대기 중 인터럽트 발생: " + e.getMessage());
-        }
-
+        // 1.5초 대기 삭제됨 - 즉시 JSON 반환
         return mapper.readTree(apiResponse.body());
     }
 
