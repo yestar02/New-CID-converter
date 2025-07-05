@@ -154,7 +154,7 @@ public class ConvertController {
             try {
                 JsonNode initialRoot = fetchSecondaryDataJsonWithSession(url, currency, "INITIAL", sessionCookies);
                 initialHotel = initialRoot.path("hotelInfo").path("name").asText("호텔명 없음");
-                initialPrice = initialRoot.path("mosaicInitData").path("discount").path("cheapestPrice").asDouble(0);
+                initialPrice = initialRoot.path("tealium").path("totalPriceTaxInc").asDouble(0);
                 initialCurrency = initialRoot.path("mosaicInitData").path("discount").path("currency").asText("UNKNOWN");
 
                 System.out.printf("사용자 쿠키로 가져온 초기 가격: %.2f %s%n", initialPrice, initialCurrency);
@@ -369,7 +369,7 @@ public class ConvertController {
                 JsonNode root = fetchSecondaryDataJsonWithSession(modUrl, currency, entry.label(), updatedCookies);
 
                 String hotel = root.path("hotelInfo").path("name").asText(null);
-                double price = root.path("mosaicInitData").path("discount").path("cheapestPrice").asDouble(0);
+                double price = root.path("tealium").path("totalPriceTaxInc").asDouble(0);
                 String apiCurrency = root.path("mosaicInitData").path("discount").path("currency").asText("UNKNOWN");
 
                 boolean soldOut = price == 0;
